@@ -1,1 +1,24 @@
-.idea
+**/__pycache__
+.vscode
+.DS_Store
+
+.checkpoints
+
+.assets
+
+.datasets
+
+debug
+
+.log
+
+wandb
+
+outputs
+exp
+tmp
+
+# submodules
+submodules/diff-gaussian-rasterization
+scripts
+
