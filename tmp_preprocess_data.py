@@ -58,6 +58,7 @@ mesh, labels = _donwscale_mesh(mesh, labels)
 # %%
 from utils.other_utils import label2color_upper, output_pred_ply
 
+# get gt mask
 
 mask = []
 for label in labels:
@@ -69,6 +70,8 @@ cell_normals = mesh.face_normals            # shape: (n_faces, 3)
 point_coords = mesh.vertices                # shape: (n_vertices, 3)
 face_info = mesh.faces                      # shape: (n_faces, 3)
 output_pred_ply(mask, None, 'tmp/YBSESUN6_upper_mask.ply', point_coords, face_info)
+
+
 
 
 # %%
