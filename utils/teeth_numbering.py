@@ -45,7 +45,8 @@ _teeth_labels = {
     17: 'r_3_nd_molar'
 }
 
-_teeth_codes_lower = {
+# label 1-8 UR8-1 9-16 UL1-8
+_teeth_codes_upper = {
     11: (8, 'central_incisor'),
     12: (7, 'lateral_incisor'),
     13: (6, 'canine'),
@@ -65,7 +66,8 @@ _teeth_codes_lower = {
     0: (0, 'gum')
 }
 
-_teeth_codes_upper = {
+# label 1-8 LL8-1 9-16 LR1-8
+_teeth_codes_lower = {
     31: (8, 'central_incisor'),
     32: (7, 'lateral_incisor'),
     33: (6, 'canine'),

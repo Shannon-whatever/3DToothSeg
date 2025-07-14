@@ -10,6 +10,8 @@ import torch
 
 from utils.teeth_numbering import fdi_to_label
 
+from utils.other_utils import FDI2label
+
 
 # %%
 def _donwscale_mesh(mesh, labels):
@@ -49,7 +51,9 @@ with open(obj_file.replace('.obj', '.json')) as f:
 labels = np.array(data["labels"]) # 144045
 labels = labels[mesh.faces]
 labels = labels[:, 0]
-labels = fdi_to_label(labels)
+labels_1 = [FDI2label[label] for label in labels]
+labels_2 = fdi_to_label(labels)
+
 
 # %%
 

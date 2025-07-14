@@ -1,7 +1,7 @@
 import torch
 
 color2label = {
-    # upper
+    # upper label 1-8 UL1-8, label 9-16 UR1-8
     (170, 255, 127): ("aaff7f", "UL1", 1),
     (170, 255, 255): ("aaffff", "UL2", 2),
     (255, 255, 0): ("ffff00", "UL3", 3),
@@ -20,7 +20,7 @@ color2label = {
     (73, 247, 235): ("49f7eb", "UR7", 15),
     (125, 18, 247): ("7d12f7", "UR8", 16),
 
-    # lower
+    # lower 1-8 LL1-8, 9-16 LR1-8
     (240, 0, 0): ("f00000", "LL1", 1),
     (251, 255, 3): ("fbff03", "LL2", 2),
     (44, 251, 255): ("2cfbff", "LL3", 3),
@@ -133,13 +133,33 @@ FDI2color = {
     0: ("cccccc", 'GUM', (204, 204, 204)),
 }
 
+_teeth_labels = {
+    0: 'gum',
+    1: 'l_central_incisor',
+    2: 'l_lateral_incisor',
+    3: 'l_canine',
+    4: 'l_1_st_premolar',
+    5: 'l_2_nd premolar',
+    6: 'l_1_st_molar',
+    7: 'l_2_nd_molar',
+    8: 'l_3_nd_molar',
+    9: 'r_central_incisor',
+    10: 'r_lateral_incisor',
+    11: 'r_canine',
+    12: 'r_1_st_premolar',
+    13: 'r_2_nd premolar',
+    14: 'r_1_st_molar',
+    15: 'r_2_nd_molar',
+    17: 'r_3_nd_molar'
+}
+
 FDI2label = {
              0: 0,  # gum
-             21: 1, 22: 2, 23: 3, 24: 4, 25: 5, 26: 6, 27: 7, 28: 8, 
-             11: 9, 12: 10, 13: 11, 14: 12, 15: 13, 16: 14, 17: 15, 18: 16, 
+             21: 1, 22: 2, 23: 3, 24: 4, 25: 5, 26: 6, 27: 7, 28: 8, # upper left
+             11: 9, 12: 10, 13: 11, 14: 12, 15: 13, 16: 14, 17: 15, 18: 16, # upper right
              
-             31: 1, 32: 2, 33: 3, 34: 4, 35: 5, 36: 6, 37: 7, 38: 8, 
-             41: 9, 42: 10, 43: 11, 44: 12, 45: 13, 46: 14, 47: 15, 48: 16}
+             31: 1, 32: 2, 33: 3, 34: 4, 35: 5, 36: 6, 37: 7, 38: 8, # lower left
+             41: 9, 42: 10, 43: 11, 44: 12, 45: 13, 46: 14, 47: 15, 48: 16} # lower right
 
 
 def cal_metric(gt_labels, pred_labels, target_class=None):

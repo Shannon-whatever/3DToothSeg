@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from dataset.preprocessing_dilated import MoveToOriginTransform
 from utils.mesh_io import filter_files
-from utils import colors_to_label, fdi_to_label
+from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label
 
 
 def process_mesh(mesh: trimesh, labels: torch.tensor = None):
@@ -23,7 +23,14 @@ def process_mesh(mesh: trimesh, labels: torch.tensor = None):
     mesh_face_normals = torch.from_numpy(mesh.face_normals.copy()).float()
     mesh_vertices_normals = torch.from_numpy(mesh.vertex_normals[mesh.faces]).float()
     if labels is None:
-        labels = torch.from_numpy(colors_to_label(mesh.visual.face_colors.copy())).long()
+        labels = np.zeros(mesh_faces.shape[0], dtype=np.int64)
+        for idx, face_color in enumerate(mesh.visual.face_colors):
+            if len(face_color) == 4:
+                face_color = face_color[:3]
+            label = color2label[tuple(face_color)][-1]
+            labels[idx] = label
+    
+        labels = torch.from_numpy(labels).long()
     return mesh_faces, mesh_triangles, mesh_vertices_normals, mesh_face_normals, labels
 
 
@@ -59,12 +66,14 @@ class Teeth3DSDataset(Dataset):
         elif self.train_test_split == 2:
             split_files = ['public-training-set-1.txt', 'public-training-set-2.txt'] if is_train \
                 else ['private-testing-set.txt']
+        elif self.train_test_split == 0:
+            split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
         else:
             raise ValueError(f'train_test_split should be 1 or 2. not {self.train_test_split}')
         for f in split_files:
-            with open(f'data/3dteethseg/raw/{f}') as file:
+            with open(f'.datasets/teeth3ds/Teeth3DS_split/{f}') as file:
                 for l in file:
-                    l = f'data_{l.rstrip()}.pt'
+                    l = f'{l.rstrip()}_process.ply'
                     if os.path.isfile(join(self.root, self.processed_folder, l)):
                         self.file_names.append(l)
 
@@ -117,44 +126,59 @@ class Teeth3DSDataset(Dataset):
                     labels = np.array(data["labels"])
                     labels = labels[mesh.faces]
                     labels = labels[:, 0]
-                    labels = fdi_to_label(labels)
+                    labels = [FDI2label[label] for label in labels]
                     mesh, labels = self._donwscale_mesh(mesh, labels)
                     fn = file.replace('.obj', '')
                     yield mesh, labels, fn
 
     def _is_processed(self):
-        files_processed = filter_files(join(self.root, self.processed_folder), 'pt')
+        files_processed = filter_files(join(self.root, self.processed_folder), 'ply')
         files_raw = filter_files(join(self.root, self.raw_folder), 'obj')
         return len(files_processed) == len(files_raw)
 
     def _process(self):
         self._log('Processing data')
-        for f in filter_files(join(self.root, self.processed_folder), 'pt'):
-            os.remove(join(self.root, self.processed_folder, f))
+        # for f in filter_files(join(self.root, self.processed_folder), 'pt'):
+        #     os.remove(join(self.root, self.processed_folder, f))
         for mesh, labels, fn in self._loop(self._iterate_mesh_and_labels()):
-            mesh = self.move_to_origin(mesh)
-            data = process_mesh(mesh, torch.from_numpy(labels).long())
-            if self.pre_transform is not None:
-                data = self.pre_transform(data)
-            with open(f'{join(self.root, self.processed_folder)}/data_{fn}.pt', 'wb') as f:
-                pickle.dump(data, f)
+            save_path = f'{join(self.root, self.processed_folder)}/{fn}_process.ply'
+            mask = []
+            for label in labels:
+                if 'upper' in fn:
+                    color = label2color_upper[label][2]  # label 是单个 int
+                elif 'lower' in fn:
+                    color = label2color_lower[label][2]
+                mask.append(color)
+            mask = np.array(mask, dtype=np.uint8)  # shape: (N, 3)
+
+            point_coords = mesh.vertices                # shape: (n_vertices, 3)
+            face_info = mesh.faces                      # shape: (n_faces, 3)
+            output_pred_ply(mask, None, save_path, point_coords, face_info)
+
+            # mesh = self.move_to_origin(mesh)
+            # data = process_mesh(mesh, torch.from_numpy(labels).long())
+            # if self.pre_transform is not None:
+            #     data = self.pre_transform(data)
+            # with open(f'{join(self.root, self.processed_folder)}/data_{fn}.pt', 'wb') as f:
+            #     pickle.dump(data, f)
         self._log('Processing done')
 
-    def _load_in_memory(self):
-        files_processed = [join(self.root, self.processed_folder, f) for f in self.file_names]
-        for i, f in enumerate(files_processed):
-            file = open(join(self.root, self.processed_folder, f), 'rb')
-            data = pickle.load(file)
-            if self.post_transform is not None:
-                data = self.post_transform(data)
-            self.in_memory_data.append(data)
+    # def _load_in_memory(self):
+    #     files_processed = [join(self.root, self.processed_folder, f) for f in self.file_names]
+    #     for i, f in enumerate(files_processed):
+    #         file = open(join(self.root, self.processed_folder, f), 'rb')
+    #         data = pickle.load(file)
+    #         if self.post_transform is not None:
+    #             data = self.post_transform(data)
+    #         self.in_memory_data.append(data)
 
     def __len__(self):
         return len(self.file_names)
 
     def __getitem__(self, index):
         if self.in_memory:
-            return self.in_memory_data[index]
+            raise NotImplementedError("In-memory loading is not implemented yet.")
+            # return self.in_memory_data[index]
         else:
             f = self.file_names[index]
             file = open(join(self.root, self.processed_folder, f), 'rb')
