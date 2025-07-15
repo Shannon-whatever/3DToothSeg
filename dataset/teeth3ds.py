@@ -36,12 +36,12 @@ def process_mesh(mesh: trimesh, labels: torch.tensor = None):
 
 class Teeth3DSDataset(Dataset):
 
-    def __init__(self, root: str, raw_folder: str = 'raw', processed_folder: str = 'processed_torch',
+    def __init__(self, root: str, raw_folder: str = 'raw', processed_folder: str = 'processed',
                  in_memory: bool = False, verbose: bool = True, pre_transform=None, post_transform=None,
                  force_process=False, train_test_split=1, is_train=True):
         self.root = root
         self.processed_folder = processed_folder
-        self.raw_folder = raw_folder
+        # self.raw_folder = raw_folder
         self.pre_transform = pre_transform
         self.post_transform = post_transform
         self.in_memory = in_memory
@@ -52,10 +52,10 @@ class Teeth3DSDataset(Dataset):
         self._set_file_index(is_train)
         self.move_to_origin = MoveToOriginTransform()
         Path(join(self.root, self.processed_folder)).mkdir(parents=True, exist_ok=True)
-        Path(join(self.root, self.raw_folder)).mkdir(parents=True, exist_ok=True)
+        # Path(join(self.root, self.raw_folder)).mkdir(parents=True, exist_ok=True)
         if not self._is_processed() or force_process:
             self._process()
-        self.processed_file_names = filter_files(join(self.root, self.processed_folder), 'pt')
+        # self.processed_file_names = filter_files(join(self.root, self.processed_folder), 'pt')
         if self.in_memory:
             self._load_in_memory()
         
@@ -69,7 +69,7 @@ class Teeth3DSDataset(Dataset):
         elif self.train_test_split == 0:
             split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
         else:
-            raise ValueError(f'train_test_split should be 1 or 2. not {self.train_test_split}')
+            raise ValueError(f'train_test_split should be 0, 1 or 2. not {self.train_test_split}')
         for f in split_files:
             with open(f'.datasets/teeth3ds/Teeth3DS_split/{f}') as file:
                 for l in file:
@@ -116,20 +116,22 @@ class Teeth3DSDataset(Dataset):
         return mesh_simple, labels
 
     def _iterate_mesh_and_labels(self):
-        root_mesh_folder = join(self.root, self.raw_folder)
-        for root, dirs, files in os.walk(root_mesh_folder):
-            for file in files:
-                if file.endswith(".obj"):
-                    mesh = trimesh.load(join(root, file))
-                    with open(join(root, file).replace('.obj', '.json')) as f:
-                        data = json.load(f)
-                    labels = np.array(data["labels"])
-                    labels = labels[mesh.faces]
-                    labels = labels[:, 0]
-                    labels = [FDI2label[label] for label in labels]
-                    mesh, labels = self._donwscale_mesh(mesh, labels)
-                    fn = file.replace('.obj', '')
-                    yield mesh, labels, fn
+        mesh_view = ['upper', 'lower']
+        for view in mesh_view:
+            root_mesh_folder = join(self.root, view)
+            for root, dirs, files in os.walk(root_mesh_folder):
+                for file in files:
+                    if file.endswith(".obj"):
+                        mesh = trimesh.load(join(root, file))
+                        with open(join(root, file).replace('.obj', '.json')) as f:
+                            data = json.load(f)
+                        labels = np.array(data["labels"])
+                        labels = labels[mesh.faces]
+                        labels = labels[:, 0]
+                        labels = [FDI2label[label] for label in labels]
+                        mesh, labels = self._donwscale_mesh(mesh, labels)
+                        fn = file.replace('.obj', '')
+                        yield mesh, labels, fn
 
     def _is_processed(self):
         files_processed = filter_files(join(self.root, self.processed_folder), 'ply')
@@ -141,7 +143,10 @@ class Teeth3DSDataset(Dataset):
         # for f in filter_files(join(self.root, self.processed_folder), 'pt'):
         #     os.remove(join(self.root, self.processed_folder, f))
         for mesh, labels, fn in self._loop(self._iterate_mesh_and_labels()):
-            save_path = f'{join(self.root, self.processed_folder)}/{fn}_process.ply'
+            if 'upper' in fn:
+                save_path = os.path.join(self.root, self.processed_folder, 'upper', f"{fn}_process.ply")
+            elif 'lower' in fn:
+                save_path = os.path.join(self.root, self.processed_folder, 'lower', f"{fn}_process.ply")
             mask = []
             for label in labels:
                 if 'upper' in fn:
@@ -183,17 +188,22 @@ class Teeth3DSDataset(Dataset):
             f = self.file_names[index]
             file = open(join(self.root, self.processed_folder, f), 'rb')
             data = pickle.load(file)
-            if self.post_transform is not None:
-                data = self.post_transform(data)
+            # if self.post_transform is not None:
+            #     data = self.post_transform(data)
             return data
         
 
+if __name__ == "__main__":
 # 
-# train = Teeth3DSDataset("data/3dteethseg", processed_folder=f'processed',
-#                                        verbose=True,
-#                                        pre_transform=PreTransform(classes=17),
-#                                        post_transform=None, in_memory=False,
-#                                        force_process=False, is_train=True, train_test_split=train_test_split)
+    train = Teeth3DSDataset(root = ".datasets/teeth3ds/sample", 
+                            processed_folder='processed',
+                            verbose=True,
+                            pre_transform=None,
+                            post_transform=None, 
+                            in_memory=False,
+                            force_process=False, is_train=True, 
+                            train_test_split=0)
+
 # test = Teeth3DSDataset("data/3dteethseg", processed_folder=f'processed',
 #                                       verbose=True,
 #                                       pre_transform=PreTransform(classes=17),

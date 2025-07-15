@@ -43,7 +43,7 @@ def _donwscale_mesh(mesh, labels):
         return mesh_simple, labels
 
 # %%
-obj_file = '.datasets/teeth3ds/sample/YBSESUN6_upper.obj'
+obj_file = '.datasets/teeth3ds/sample/upper/YBSESUN6/YBSESUN6_upper.obj'
 
 mesh = trimesh.load(obj_file) # me3sh.faces shape (287970, 3)
 with open(obj_file.replace('.obj', '.json')) as f:
@@ -51,7 +51,7 @@ with open(obj_file.replace('.obj', '.json')) as f:
 labels = np.array(data["labels"]) # 144045
 labels = labels[mesh.faces]
 labels = labels[:, 0]
-labels_1 = [FDI2label[label] for label in labels]
+labels_1 = np.array([FDI2label[label] for label in labels])
 labels_2 = fdi_to_label(labels)
 
 
@@ -93,4 +93,41 @@ FDI2label_map = build_fdi2label(FDI2color, color2label)
 print(FDI2label_map)
 
 
+
+# %%
+from utils.other_utils import color2label
+process_file = '.datasets/teeth3ds/sample/processed/upper/YBSESUN6_upper_process.ply'
+num_points = 16000
+
+mesh = trimesh.load(process_file)
+            
+cell_normals = np.array(mesh.face_normals)
+point_coords = np.array(mesh.vertices)
+face_info = np.array(mesh.faces)
+
+cell_coords = np.array([
+    [
+        (point_coords[face[0]][0] + point_coords[face[1]][0] + point_coords[face[2]][0]) / 3,
+        (point_coords[face[0]][1] + point_coords[face[1]][1] + point_coords[face[2]][1]) / 3,
+        (point_coords[face[0]][2] + point_coords[face[1]][2] + point_coords[face[2]][2]) / 3,
+    ]
+    for face in face_info
+])
+
+pointcloud = np.concatenate((cell_coords, cell_normals), axis=1)
+
+if pointcloud.shape[0] < num_points:
+    padding = np.zeros((num_points - pointcloud.shape[0], pointcloud.shape[1]))
+    face_info = np.concatenate((face_info, np.zeros(shape=(num_points - pointcloud.shape[0], 3))), axis=0)
+    pointcloud = np.concatenate((pointcloud, padding), axis=0)
+
+
+labels = np.zeros(face_info.shape[0], dtype=np.int64)
+for idx, face_color in enumerate(mesh.visual.face_colors):
+    if len(face_color) == 4:
+        face_color = face_color[:3]
+    label = color2label[tuple(face_color)][-1]
+    labels[idx] = label
+
+labels = torch.from_numpy(labels).long()
 # %%
