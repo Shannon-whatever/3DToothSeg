@@ -1,63 +1,55 @@
 import json
 import os
-import pickle
-from os.path import join
 from pathlib import Path
-
 import numpy as np
 import pyfqmr
-import torch
 import trimesh
 from scipy import spatial
 from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 from tqdm import tqdm
 
-from dataset.preprocessing_dilated import MoveToOriginTransform
+from dataset import data_util
 from utils.mesh_io import filter_files
-from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label
+from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply
 
 
-def process_mesh(mesh: trimesh, labels: torch.tensor = None):
-    mesh_faces = torch.from_numpy(mesh.faces.copy()).float()
-    mesh_triangles = torch.from_numpy(mesh.vertices[mesh.faces]).float()
-    mesh_face_normals = torch.from_numpy(mesh.face_normals.copy()).float()
-    mesh_vertices_normals = torch.from_numpy(mesh.vertex_normals[mesh.faces]).float()
-    if labels is None:
-        labels = np.zeros(mesh_faces.shape[0], dtype=np.int64)
-        for idx, face_color in enumerate(mesh.visual.face_colors):
-            if len(face_color) == 4:
-                face_color = face_color[:3]
-            label = color2label[tuple(face_color)][-1]
-            labels[idx] = label
-    
-        labels = torch.from_numpy(labels).long()
-    return mesh_faces, mesh_triangles, mesh_vertices_normals, mesh_face_normals, labels
 
 
 class Teeth3DSDataset(Dataset):
 
-    def __init__(self, root: str, raw_folder: str = 'raw', processed_folder: str = 'processed',
-                 in_memory: bool = False, verbose: bool = True, pre_transform=None, post_transform=None,
-                 force_process=False, train_test_split=1, is_train=True):
+    def __init__(self, root: str = '.datasets/teeth3ds', processed_folder: str = 'processed',
+                 in_memory: bool = False,
+                 force_process=False, train_test_split=1, is_train=True, 
+                 num_points=16000, sample_points=16000):
+        
         self.root = root
         self.processed_folder = processed_folder
-        # self.raw_folder = raw_folder
-        self.pre_transform = pre_transform
-        self.post_transform = post_transform
         self.in_memory = in_memory
         self.in_memory_data = []
-        self.verbose = verbose
         self.file_names = []
         self.train_test_split = train_test_split
-        self._set_file_index(is_train)
-        self.move_to_origin = MoveToOriginTransform()
-        Path(join(self.root, self.processed_folder)).mkdir(parents=True, exist_ok=True)
-        # Path(join(self.root, self.raw_folder)).mkdir(parents=True, exist_ok=True)
+        self.mesh_view = ['upper', 'lower']
+
+        self.num_points = num_points
+        self.point_transform = transforms.Compose(
+            [
+                data_util.PointcloudToTensor(),
+                data_util.PointcloudNormalize(radius=1),
+                data_util.PointcloudSample(total=num_points, sample=sample_points)
+            ]
+        )
+        
+        Path(os.path.join(self.root, self.processed_folder, 'upper')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(self.root, self.processed_folder, 'lower')).mkdir(parents=True, exist_ok=True)
         if not self._is_processed() or force_process:
             self._process()
-        # self.processed_file_names = filter_files(join(self.root, self.processed_folder), 'pt')
+        self._set_file_index(is_train)
         if self.in_memory:
             self._load_in_memory()
+
+
+        
         
     def _set_file_index(self, is_train: bool):
         if self.train_test_split == 1:
@@ -74,18 +66,12 @@ class Teeth3DSDataset(Dataset):
             with open(f'.datasets/teeth3ds/Teeth3DS_split/{f}') as file:
                 for l in file:
                     l = f'{l.rstrip()}_process.ply'
-                    if os.path.isfile(join(self.root, self.processed_folder, l)):
-                        self.file_names.append(l)
+                    if 'lower' in l:
+                        self.file_names.append(os.path.join(self.root, self.processed_folder, 'lower', l))
+                    elif 'upper' in l:
+                        self.file_names.append(os.path.join(self.root, self.processed_folder, 'upper', l))
 
 
-    def _log(self, message: str):
-        if self.verbose:
-            print(message)
-
-    def _loop(self, data):
-        if self.verbose:
-            return tqdm(data)
-        return data
     
     def _donwscale_mesh(self, mesh, labels):
         mesh_simplifier = pyfqmr.Simplify()
@@ -115,97 +101,149 @@ class Teeth3DSDataset(Dataset):
         labels = labels[index].flatten()
         return mesh_simple, labels
 
+    def _count_total_obj_files(self):
+        total = 0
+        for view in self.mesh_view:
+            root_mesh_folder = os.path.join(self.root, view)
+            for _, _, files in os.walk(root_mesh_folder):
+                total += sum(file.endswith(".obj") for file in files)
+        return total
+
     def _iterate_mesh_and_labels(self):
-        mesh_view = ['upper', 'lower']
-        for view in mesh_view:
-            root_mesh_folder = join(self.root, view)
+    
+        for view in self.mesh_view:
+            root_mesh_folder = os.path.join(self.root, view)
             for root, dirs, files in os.walk(root_mesh_folder):
                 for file in files:
                     if file.endswith(".obj"):
-                        mesh = trimesh.load(join(root, file))
-                        with open(join(root, file).replace('.obj', '.json')) as f:
+                        mesh = trimesh.load(os.path.join(root, file))
+                        with open(os.path.join(root, file).replace('.obj', '.json')) as f:
                             data = json.load(f)
                         labels = np.array(data["labels"])
                         labels = labels[mesh.faces]
                         labels = labels[:, 0]
-                        labels = [FDI2label[label] for label in labels]
+                        labels = np.array([FDI2label[label] for label in labels])
                         mesh, labels = self._donwscale_mesh(mesh, labels)
                         fn = file.replace('.obj', '')
                         yield mesh, labels, fn
 
     def _is_processed(self):
-        files_processed = filter_files(join(self.root, self.processed_folder), 'ply')
-        files_raw = filter_files(join(self.root, self.raw_folder), 'obj')
+        files_raw, files_processed = [], []
+        for view in self.mesh_view:
+            raw_mesh_folder = os.path.join(self.root, view)
+            process_mesh_folder = os.path.join(self.root, self.processed_folder, view)
+            files_processed.extend(filter_files(process_mesh_folder, 'ply'))
+            files_raw.extend(filter_files(raw_mesh_folder, 'obj'))
         return len(files_processed) == len(files_raw)
 
     def _process(self):
-        self._log('Processing data')
-        # for f in filter_files(join(self.root, self.processed_folder), 'pt'):
-        #     os.remove(join(self.root, self.processed_folder, f))
-        for mesh, labels, fn in self._loop(self._iterate_mesh_and_labels()):
-            if 'upper' in fn:
-                save_path = os.path.join(self.root, self.processed_folder, 'upper', f"{fn}_process.ply")
-            elif 'lower' in fn:
-                save_path = os.path.join(self.root, self.processed_folder, 'lower', f"{fn}_process.ply")
-            mask = []
-            for label in labels:
-                if 'upper' in fn:
-                    color = label2color_upper[label][2]  # label 是单个 int
-                elif 'lower' in fn:
-                    color = label2color_lower[label][2]
-                mask.append(color)
-            mask = np.array(mask, dtype=np.uint8)  # shape: (N, 3)
+        for f in filter_files(os.path.join(self.root, self.processed_folder), 'ply'):
+            if 'upper' in f:
+                os.remove(os.path.join(self.root, self.processed_folder, 'upper', f))
+            elif 'lower' in f:
+                os.remove(os.path.join(self.root, self.processed_folder, 'lower', f))
+        total_files = self._count_total_obj_files()
 
-            point_coords = mesh.vertices                # shape: (n_vertices, 3)
-            face_info = mesh.faces                      # shape: (n_faces, 3)
-            output_pred_ply(mask, None, save_path, point_coords, face_info)
+        with tqdm(total=total_files, desc="Processing meshes") as pbar:
+            for view in self.mesh_view:
+                root_mesh_folder = os.path.join(self.root, view)
+                for root, dirs, files in os.walk(root_mesh_folder):
+                    for file in files:
+                        if file.endswith(".obj"):
+                            mesh = trimesh.load(os.path.join(root, file))
 
-            # mesh = self.move_to_origin(mesh)
-            # data = process_mesh(mesh, torch.from_numpy(labels).long())
-            # if self.pre_transform is not None:
-            #     data = self.pre_transform(data)
-            # with open(f'{join(self.root, self.processed_folder)}/data_{fn}.pt', 'wb') as f:
-            #     pickle.dump(data, f)
-        self._log('Processing done')
+                            with open(os.path.join(root, file).replace('.obj', '.json')) as f:
+                                data = json.load(f)
 
-    # def _load_in_memory(self):
-    #     files_processed = [join(self.root, self.processed_folder, f) for f in self.file_names]
-    #     for i, f in enumerate(files_processed):
-    #         file = open(join(self.root, self.processed_folder, f), 'rb')
-    #         data = pickle.load(file)
-    #         if self.post_transform is not None:
-    #             data = self.post_transform(data)
-    #         self.in_memory_data.append(data)
+                            labels = np.array(data["labels"])
+                            labels = labels[mesh.faces]
+                            labels = labels[:, 0]
+                            labels = np.array([FDI2label[label] for label in labels])
+
+                            mesh, labels = self._donwscale_mesh(mesh, labels)
+                            fn = file.replace('.obj', '')
+
+                            if 'upper' in fn:
+                                save_path = os.path.join(self.root, self.processed_folder, 'upper', f"{fn}_process.ply")
+                            elif 'lower' in fn:
+                                save_path = os.path.join(self.root, self.processed_folder, 'lower', f"{fn}_process.ply")
+                            mask = []
+                            for label in labels:
+                                if 'upper' in fn:
+                                    color = label2color_upper[label][2]  # label 是单个 int
+                                elif 'lower' in fn:
+                                    color = label2color_lower[label][2]
+                                mask.append(color)
+                            mask = np.array(mask, dtype=np.uint8)  # shape: (N, 3)
+
+                            point_coords = mesh.vertices                # shape: (n_vertices, 3)
+                            face_info = mesh.faces                      # shape: (n_faces, 3)
+                            output_pred_ply(mask, None, save_path, point_coords, face_info)
+
+                            pbar.update(1)
+
+
+    def _get_data(self, file_path):
+        
+        mesh = trimesh.load(file_path)
+            
+        point_coords = np.array(mesh.vertices)
+        face_info = np.array(mesh.faces)
+
+
+        cell_normals = np.array(mesh.face_normals)
+        cell_coords = np.array([
+            [
+                (point_coords[face[0]][0] + point_coords[face[1]][0] + point_coords[face[2]][0]) / 3,
+                (point_coords[face[0]][1] + point_coords[face[1]][1] + point_coords[face[2]][1]) / 3,
+                (point_coords[face[0]][2] + point_coords[face[1]][2] + point_coords[face[2]][2]) / 3,
+            ]
+            for face in face_info
+        ])
+
+        pointcloud = np.concatenate((cell_coords, cell_normals), axis=1) # (N, 6)
+
+        if pointcloud.shape[0] < self.num_points:
+            padding = np.zeros((self.num_points - pointcloud.shape[0], pointcloud.shape[1]))
+            face_info = np.concatenate((face_info, np.zeros(shape=(self.num_points - pointcloud.shape[0], 3))), axis=0)
+            pointcloud = np.concatenate((pointcloud, padding), axis=0)
+
+        # labels
+        labels = load_color_from_ply(file_path)
+
+
+        pointcloud, labels, face_info = self.point_transform([pointcloud, labels, face_info])
+
+
+        return pointcloud, labels, point_coords, face_info
+    
+    def _load_in_memory(self):
+        for f in tqdm(self.file_names, desc="Loading point clouds into memory"):
+            pointcloud, labels, point_coords, faces = self._get_data(f)
+            self.in_memory_data.append((pointcloud, labels, point_coords, faces, os.path.basename(f)))
 
     def __len__(self):
         return len(self.file_names)
 
     def __getitem__(self, index):
         if self.in_memory:
-            raise NotImplementedError("In-memory loading is not implemented yet.")
-            # return self.in_memory_data[index]
+            (pointcloud, labels, point_coords, faces, file_name) = self.in_memory_data[index]
+        
         else:
             f = self.file_names[index]
-            file = open(join(self.root, self.processed_folder, f), 'rb')
-            data = pickle.load(file)
-            # if self.post_transform is not None:
-            #     data = self.post_transform(data)
-            return data
+            pointcloud, labels, point_coords, faces = self._get_data(f)
+            file_name = os.path.basename(f)
+
+        return pointcloud, labels, point_coords, faces, file_name
+
+            
+        
         
 
 if __name__ == "__main__":
 # 
     train = Teeth3DSDataset(root = ".datasets/teeth3ds/sample", 
                             processed_folder='processed',
-                            verbose=True,
-                            pre_transform=None,
-                            post_transform=None, 
-                            in_memory=False,
-                            force_process=False, is_train=True, 
+                            in_memory=True,
+                            force_process=True, is_train=True, 
                             train_test_split=0)
-
-# test = Teeth3DSDataset("data/3dteethseg", processed_folder=f'processed',
-#                                       verbose=True,
-#                                       pre_transform=PreTransform(classes=17),
-#                                       post_transform=None, in_memory=False,
-#                                       force_process=False, is_train=False, train_test_split=train_test_split)

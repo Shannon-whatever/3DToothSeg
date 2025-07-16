@@ -3,8 +3,8 @@ import numpy as np
 
 class PointcloudToTensor(object):
     def __call__(self, data):
-        points, face_info = data
-        return torch.from_numpy(points).float(), face_info
+        points, labels, faces = data
+        return torch.from_numpy(points).float(), torch.from_numpy(labels).long(), faces
 
 
 class PointcloudNormalize(object):
@@ -12,18 +12,19 @@ class PointcloudNormalize(object):
         self.radius = radius
 
     def pc_normalize(self, pc):
-        l = pc.shape[0]
-        centroid = np.mean(pc, axis=0)
-        pc = pc - centroid
-        m = np.max(np.sqrt(np.sum(pc ** 2, axis=1)))
-        pc = pc / m
+        centroid = pc.mean(dim=0)                 # (3,)
+        pc = pc - centroid                        # 中心化
+        m = torch.sqrt((pc ** 2).sum(dim=1)).max()  # 最大欧几里得距离
+        pc = pc / m * self.radius                          # 缩放到单位球内
         return pc
 
+
     def __call__(self, data):
-        points, face_info = data
-        pc = points.numpy()
+        points,  labels, faces = data
+        pc = points.clone()
         pc[:, 0:3] = self.pc_normalize(pc[:, 0:3])
-        return (torch.from_numpy(pc).float(), face_info)
+        return (pc, labels, faces)
+
 
 
 
@@ -33,6 +34,6 @@ class PointcloudSample(object):
         self.sample = sample
 
     def __call__(self, data):
-        points, face_info = data
+        points, labels, faces = data
         sample = np.random.permutation(self.total)[:self.sample]
-        return (points[sample], face_info[sample])
+        return (points[sample], labels[sample], faces[sample])

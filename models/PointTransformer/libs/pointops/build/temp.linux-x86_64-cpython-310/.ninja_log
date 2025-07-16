@@ -1,0 +1,21 @@
+# ninja log v5
+3	13269	1752653782830274649	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/knnquery/knnquery_cuda.o	4a3bc590491dce44
+2	13608	1752653783182264548	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/interpolation/interpolation_cuda.o	c0314264fec08b20
+0	13976	1752653783549254023	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/aggregation/aggregation_cuda.o	d9ad60d3239fe1aa
+1	14191	1752653783761247944	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/grouping/grouping_cuda.o	33ba872b7fc399bc
+4	14412	1752653783979241692	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/sampling/sampling_cuda.o	34920da5df90df40
+5	14623	1752653784187235735	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/subtraction/subtraction_cuda.o	704ac2fb6826774b
+4	29676	1752653799222809672	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/pointops_api.o	ccc267a16595a8dc
+31	19569	1752654210769958342	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/sampling/sampling_cuda.o	28582c5486676cce
+28	19862	1752654211059953553	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/grouping/grouping_cuda.o	c8e4a0b6d92cf0a4
+29	19879	1752654211072953338	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/interpolation/interpolation_cuda.o	3f067fc7a243801f
+30	20024	1752654211218950929	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/knnquery/knnquery_cuda.o	1a257b3c17ab19e1
+27	20042	1752654211218950929	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/aggregation/aggregation_cuda.o	27bd2ce64ad58468
+32	20060	1752654211247950451	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/subtraction/subtraction_cuda.o	41bf5f57326c2225
+30	34731	1752654225908710398	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/knnquery/knnquery_cuda_kernel.o	57b30b617726968d
+32	35032	1752654226205705576	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/subtraction/subtraction_cuda_kernel.o	7a55ffd00ade6d2c
+29	35564	1752654226731697037	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/grouping/grouping_cuda_kernel.o	16319b5f50ad30a9
+28	35683	1752654226858694976	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/aggregation/aggregation_cuda_kernel.o	67a7f6e6ecdd032c
+30	35717	1752654226887694505	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/interpolation/interpolation_cuda_kernel.o	3a3253a1036b0d3e
+32	35737	1752654226902694262	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/sampling/sampling_cuda_kernel.o	5bbd6c6aed3b4748
+31	36079	1752654227267688342	/home/zychen/Documents/3DToothSeg/models/PointTransformer/libs/pointops/build/temp.linux-x86_64-cpython-310/src/pointops_api.o	1cd882373fc8d045

@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+from plyfile import PlyData
 
 color2label = {
     # upper label 1-8 UL1-8, label 9-16 UR1-8
@@ -150,7 +152,7 @@ _teeth_labels = {
     13: 'r_2_nd premolar',
     14: 'r_1_st_molar',
     15: 'r_2_nd_molar',
-    17: 'r_3_nd_molar'
+    16: 'r_3_nd_molar'
 }
 
 FDI2label = {
@@ -253,3 +255,22 @@ def output_pred_ply(pred_mask, cell_coords, path, point_coords=None, face_info=N
         f.write(cell_info)
 
     return
+
+
+def load_color_from_ply(file_path):
+    plydata = PlyData.read(file_path)
+    face = plydata['face']
+    # 获取面颜色
+    if 'red' in face and 'green' in face and 'blue' in face:
+        colors = np.stack([face['red'], face['green'], face['blue']], axis=1)
+    else:
+        raise ValueError("No face color info in PLY file")
+
+    labels = []
+    for c in colors:
+        c_tuple = tuple(c)
+        assert c_tuple in color2label, f"Color {c_tuple} not found in color2label"
+
+        labels.append(color2label[c_tuple][2])
+
+    return np.array(labels)

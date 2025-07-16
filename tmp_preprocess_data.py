@@ -52,7 +52,7 @@ labels = np.array(data["labels"]) # 144045
 labels = labels[mesh.faces]
 labels = labels[:, 0]
 labels_1 = np.array([FDI2label[label] for label in labels])
-labels_2 = fdi_to_label(labels)
+# labels_2 = fdi_to_label(labels)
 
 
 # %%
@@ -95,7 +95,8 @@ print(FDI2label_map)
 
 
 # %%
-from utils.other_utils import color2label
+from utils.other_utils import color2label, load_color_from_ply
+
 process_file = '.datasets/teeth3ds/sample/processed/upper/YBSESUN6_upper_process.ply'
 num_points = 16000
 
@@ -105,6 +106,7 @@ cell_normals = np.array(mesh.face_normals)
 point_coords = np.array(mesh.vertices)
 face_info = np.array(mesh.faces)
 
+# centroid of each face
 cell_coords = np.array([
     [
         (point_coords[face[0]][0] + point_coords[face[1]][0] + point_coords[face[2]][0]) / 3,
@@ -122,12 +124,67 @@ if pointcloud.shape[0] < num_points:
     pointcloud = np.concatenate((pointcloud, padding), axis=0)
 
 
-labels = np.zeros(face_info.shape[0], dtype=np.int64)
-for idx, face_color in enumerate(mesh.visual.face_colors):
-    if len(face_color) == 4:
-        face_color = face_color[:3]
-    label = color2label[tuple(face_color)][-1]
-    labels[idx] = label
 
-labels = torch.from_numpy(labels).long()
+# labels
+labels = load_color_from_ply(process_file)
+labels = torch.from_numpy(labels)
+
+
+# %%
+permute = np.random.permutation(num_points)
+pointcloud = pointcloud[permute]
+face_info = face_info[permute]
+labels = labels[permute]
+
+
+# %%
+
+def load_color_from_ply(file_path):
+    plydata = PlyData.read(file_path)
+    face = plydata['face']
+    # 获取面颜色
+    if 'red' in face and 'green' in face and 'blue' in face:
+        colors = np.stack([face['red'], face['green'], face['blue']], axis=1)
+    else:
+        raise ValueError("No face color info in PLY file")
+
+    labels = []
+    for c in colors:
+        c_tuple = tuple(c)
+        assert c_tuple in color2label, f"Color {c_tuple} not found in color2label"
+
+        labels.append(color2label[c_tuple][2])
+
+    return np.array(labels, dtype=np.int64)
+
+
+# %%
+from plyfile import PlyData
+
+plydata = PlyData.read(process_file)
+face = plydata['face']
+
+# 获取所有顶点坐标
+
+# 获取面顶点索引
+face_indices = face['vertex_indices']
+# 获取面颜色
+if 'red' in face and 'green' in face and 'blue' in face:
+    colors = np.stack([face['red'], face['green'], face['blue']], axis=1)
+else:
+    raise ValueError("PLY文件的face没有颜色属性")
+
+
+face_xyzs = []
+for idxs in face_info:
+    idxs = list(idxs)
+    # 按xyz排序顶点
+    pts = point_coords[idxs]
+    pts_sorted = pts[np.lexsort((pts[:,2], pts[:,1], pts[:,0]))]
+    face_xyzs.append(pts_sorted.flatten())
+
+
+
+
+# np.array(labels, dtype=np.int32), np.array(face_xyzs)
 # %%
