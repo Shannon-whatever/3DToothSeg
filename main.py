@@ -25,12 +25,12 @@ class ToothSegmentationPipeline:
 
         train_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=False, train_test_split=self.args.train_test_split, is_train=True,
+            force_process=True, train_test_split=self.args.train_test_split, is_train=True,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
         test_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=False, train_test_split=self.args.train_test_split, is_train=False,
+            force_process=True, train_test_split=self.args.train_test_split, is_train=False,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
 

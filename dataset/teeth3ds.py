@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from dataset import data_util
 from utils.mesh_io import filter_files
-from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply
+from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply, face_labels_to_vertex_labels
 
 
 
@@ -176,9 +176,21 @@ class Teeth3DSDataset(Dataset):
                                 mask.append(color)
                             mask = np.array(mask, dtype=np.uint8)  # shape: (N, 3)
 
+                            # get vertex mask              # shape: (n_vertices, 3)
+
+                            vertex_labels = face_labels_to_vertex_labels(mesh.faces, labels, len(mesh.vertices))
+                            vertex_mask = []
+                            for label in vertex_labels:
+                                if 'upper' in fn:
+                                    color = label2color_upper[label][2]  # label 是单个 int
+                                elif 'lower' in fn:
+                                    color = label2color_lower[label][2]
+                                vertex_mask.append(color)
+                            vertex_mask = np.array(vertex_mask, dtype=np.uint8)  # shape: (N, 3)
+
                             point_coords = mesh.vertices                # shape: (n_vertices, 3)
                             face_info = mesh.faces                      # shape: (n_faces, 3)
-                            output_pred_ply(mask, None, save_path, point_coords, face_info)
+                            output_pred_ply(mask, None, save_path, point_coords, face_info, vertex_mask)
 
                             pbar.update(1)
 

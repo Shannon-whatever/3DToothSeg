@@ -42,7 +42,7 @@ color2label = {
     (82, 204, 169): ("52cca9", "LR8", 16),
 
     # gum
-    (204, 204, 204): ("cccccc", 'GUM', 0),
+    (125, 125, 125): ("7d7d7d", 'GUM', 0),
 }
 
 label2color_lower = {
@@ -65,7 +65,7 @@ label2color_lower = {
     16: ("52cca9", "LR8", (82, 204, 169)),
 
     # gum
-    0: ("cccccc", 'GUM', (204, 204, 204)),
+    0: ("7d7d7d", 'GUM', (125, 125, 125)),
 }
 
 label2color_upper = {
@@ -88,7 +88,7 @@ label2color_upper = {
     16: ("7d12f7", "UR8", (125, 18, 247)),
 
     # gum
-    0: ("cccccc", 'GUM', (204, 204, 204)),
+    0: ("7d7d7d", 'GUM', (125, 125, 125)),
 }
 
 FDI2color = {
@@ -132,7 +132,7 @@ FDI2color = {
     48: ("52cca9", "LR8", (82, 204, 169)),
 
     # gum
-    0: ("cccccc", 'GUM', (204, 204, 204)),
+    0: ("7d7d7d", 'GUM', (125, 125, 125)),
 }
 
 _teeth_labels = {
@@ -193,12 +193,15 @@ def cal_metric(gt_labels, pred_labels, target_class=None):
     return ACC, precision, recall, F1, IOU, pred_classes
 
 
-def output_pred_ply(pred_mask, cell_coords, path, point_coords=None, face_info=None):
+def output_pred_ply(pred_mask, cell_coords, path, point_coords=None, face_info=None, vertex_colors=None):
     if point_coords is not None and face_info is not None:
         vertex_info = ""
         cell_info = ""
-        for pc in point_coords:
-            vertex_info += f'{pc[0]} {pc[1]} {pc[2]} {125} {125} {125} {255}\n'
+        for idx, pc in enumerate(point_coords):
+            if vertex_colors is None:
+                vertex_info += f'{pc[0]} {pc[1]} {pc[2]} {125} {125} {125} {255}\n'
+            else:
+                vertex_info += f'{pc[0]} {pc[1]} {pc[2]} {vertex_colors[idx][0]} {vertex_colors[idx][1]} {vertex_colors[idx][2]} {255}\n'
 
         valid_face_num = 0
         for color, fi in zip(pred_mask, face_info):
@@ -274,3 +277,49 @@ def load_color_from_ply(file_path):
         labels.append(color2label[c_tuple][2])
 
     return np.array(labels)
+
+
+from scipy.spatial import KDTree
+
+def get_boundary_mask(vertices, vertex_labels, k=8):
+    tree = KDTree(vertices)
+    dists, idxs = tree.query(vertices, k=k+1)  # k+1 因为包含自身
+
+    boundary_mask = np.zeros(len(vertices), dtype=np.uint8)  # 0/1 mask
+
+    for i in range(len(vertices)):
+        neighbors = idxs[i, 1:]  # 去除自身
+        neighbor_labels = vertex_labels[neighbors]
+        center_label = vertex_labels[i]
+        diff_count = np.sum(neighbor_labels != center_label)
+
+        if diff_count >= (k // 2 + 1):  # 超过一半邻居类别不同
+            boundary_mask[i] = 1
+
+    return boundary_mask
+
+
+from collections import defaultdict, Counter
+
+def face_labels_to_vertex_labels(faces, face_labels, num_vertices):
+    # faces: (F, 3) int array of vertex indices per face
+    # face_labels: (F,) int array of face labels
+    # num_vertices: 顶点总数
+
+    vertex_face_labels = defaultdict(list)
+
+    for face_idx, face in enumerate(faces):
+        label = face_labels[face_idx]
+        for v in face:
+            vertex_face_labels[v].append(label)
+
+    vertex_labels = np.zeros(num_vertices, dtype=face_labels.dtype)
+    for v in range(num_vertices):
+        if v in vertex_face_labels:
+            # 统计邻接面标签的众数
+            c = Counter(vertex_face_labels[v])
+            vertex_labels[v] = c.most_common(1)[0][0]
+        else:
+            vertex_labels[v] = -1  # 或者设置为无标签标识
+
+    return vertex_labels

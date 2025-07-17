@@ -51,7 +51,7 @@ with open(obj_file.replace('.obj', '.json')) as f:
 labels = np.array(data["labels"]) # 144045
 labels = labels[mesh.faces]
 labels = labels[:, 0]
-labels_1 = np.array([FDI2label[label] for label in labels])
+labels = np.array([FDI2label[label] for label in labels])
 # labels_2 = fdi_to_label(labels)
 
 
@@ -59,21 +59,57 @@ labels_1 = np.array([FDI2label[label] for label in labels])
 
 mesh, labels = _donwscale_mesh(mesh, labels)
 
+from collections import defaultdict, Counter
+
+def face_labels_to_vertex_labels(faces, face_labels, num_vertices):
+    # faces: (F, 3) int array of vertex indices per face
+    # face_labels: (F,) int array of face labels
+    # num_vertices: 顶点总数
+
+    vertex_face_labels = defaultdict(list)
+
+    for face_idx, face in enumerate(faces):
+        label = face_labels[face_idx]
+        for v in face:
+            vertex_face_labels[v].append(label)
+
+    vertex_labels = np.zeros(num_vertices, dtype=face_labels.dtype)
+    for v in range(num_vertices):
+        if v in vertex_face_labels:
+            # 统计邻接面标签的众数
+            c = Counter(vertex_face_labels[v])
+            vertex_labels[v] = c.most_common(1)[0][0]
+        else:
+            vertex_labels[v] = -1  # 或者设置为无标签标识
+
+    return vertex_labels
+
+faces = mesh.faces
+num_vertices = len(mesh.vertices)
+vertex_labels = face_labels_to_vertex_labels(faces, labels, num_vertices)
+
 # %%
 from utils.other_utils import label2color_upper, output_pred_ply
 
 # get gt mask
 
-mask = []
+face_mask = []
 for label in labels:
     color = label2color_upper[label][2]  # label 是单个 int
-    mask.append(color)
-mask = np.array(mask, dtype=np.uint8)  # shape: (N, 3)
+    face_mask.append(color)
+face_mask = np.array(face_mask, dtype=np.uint8)  # shape: (N, 3)
+
+vertex_mask = []
+for label in vertex_labels:
+    color = label2color_upper[label][2]  # label 是单个 int
+    vertex_mask.append(color)
+vertex_mask = np.array(vertex_mask, dtype=np.uint8)  # shape: (N, 3)
+
 
 cell_normals = mesh.face_normals            # shape: (n_faces, 3)
 point_coords = mesh.vertices                # shape: (n_vertices, 3)
 face_info = mesh.faces                      # shape: (n_faces, 3)
-output_pred_ply(mask, None, 'tmp/YBSESUN6_upper_mask.ply', point_coords, face_info)
+output_pred_ply(face_mask, None, 'tmp/YBSESUN6_upper_mask.ply', point_coords, face_info, vertex_mask)
 
 
 
@@ -187,4 +223,52 @@ for idxs in face_info:
 
 
 # np.array(labels, dtype=np.int32), np.array(face_xyzs)
+# %%
+import numpy as np
+from plyfile import PlyData
+import trimesh
+import pyrender
+from utils.other_utils import color2label
+
+# 创建模型
+model_path = '.datasets/teeth3ds/sample/processed/upper/YBSESUN6_upper_process.ply'
+label_trimesh = trimesh.load(model_path)
+pyrender_mesh = pyrender.Mesh.from_trimesh(label_trimesh)
+
+# 创建场景
+scene = pyrender.Scene()
+label_scene = pyrender.Scene()
+
+# 场景添加模型
+scene.add(pyrender_mesh)
+seg_node_map = {}
+vertex_instances = {}
+label_color_map = {}
+face_instances = {}
+for i, vertex_color in enumerate(label_trimesh.visual.vertex_colors):
+    vertex_color = (vertex_color[0], vertex_color[1], vertex_color[2])
+    if vertex_color in color2label:
+        vertex_label = color2label[vertex_color][2]
+        if not vertex_label in vertex_instances:
+            vertex_instances[vertex_label] = {}
+        vertex_instances[vertex_label][i] = len(vertex_instances[vertex_label])
+        label_color_map[vertex_label] = vertex_color
+for i, face in enumerate(label_trimesh.faces):
+    for label, vertices in vertex_instances.items():
+        if face[0] in vertices and face[1] in vertices and face[2] in vertices:
+            if not label in face_instances:
+                face_instances[label] = []
+            face_instances[label].append([vertices[face[0]], vertices[face[1]], vertices[face[2]]])
+for label, vertices in vertex_instances.items():
+    label_color = label_color_map[label]
+    label_color = [label_color[0], label_color[1], label_color[2]]
+    vertice_node = np.array([label_trimesh.vertices[i] for i, _ in vertices.items()], dtype=float)
+    vertice_color_node = np.array([label_color] * vertice_node.shape[0])
+    face_node = np.array(face_instances[label])
+    face_color_node = np.array([label_color] * face_node.shape[0])
+    mesh_node = trimesh.Trimesh(vertices=vertice_node, faces=face_node, vertex_colors=vertice_color_node, face_colors=face_color_node)
+
+    # 当前模型添加到场景中
+    node = label_scene.add(pyrender.Mesh.from_trimesh(mesh_node))
+    seg_node_map[node] = label_color
 # %%
