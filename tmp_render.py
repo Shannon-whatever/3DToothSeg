@@ -194,7 +194,7 @@ def render(model_path, save_path, rend_size=(256, 256)):
 
 if __name__ == '__main__':
 
-    ply_cell_color_path = '.datasets/teeth3ds/sample/processed/upper/YBSESUN6_upper_process.ply'
+    ply_cell_color_path = 'tmp/YBSESUN6_upper_gt.ply'
     save_path = "tmp"
     render(ply_cell_color_path, save_path, rend_size=(1024, 1024))
 
