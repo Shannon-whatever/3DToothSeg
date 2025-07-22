@@ -1,3 +1,4 @@
+from glob import glob
 import json
 import os
 from pathlib import Path
@@ -8,8 +9,12 @@ from scipy import spatial
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import cv2
+import torch
+
 
 from dataset import data_util
+from dataset import image_util
 from utils.mesh_io import filter_files
 from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply, face_labels_to_vertex_labels
 
@@ -32,14 +37,47 @@ class Teeth3DSDataset(Dataset):
         self.mesh_view = ['upper', 'lower']
 
         self.num_points = num_points
-        self.point_transform = transforms.Compose(
-            [
-                data_util.PointcloudToTensor(),
-                data_util.PointcloudNormalize(radius=1),
-                data_util.PointcloudSample(total=num_points, sample=sample_points)
-            ]
-        )
+
+        value_scale = 255
+        mean = [0.485, 0.456, 0.406]
+        mean = [item * value_scale for item in mean]
+        std = [0.229, 0.224, 0.225]
+        std = [item * value_scale for item in std]
         
+        if is_train:
+            self.point_transform = transforms.Compose(
+                [
+                    data_util.PointcloudToTensor(),
+                    data_util.PointcloudNormalize(radius=1),
+                    data_util.PointcloudSample(total=num_points, sample=sample_points, permute=True)
+                ]
+            )
+
+            self.image_transform = image_util.Compose([
+                image_util.RandScale([0.5, 2.0]), # args.scale_min, args.scale_max
+                image_util.RandRotate([-10, 10], padding=mean, ignore_label=255),
+                image_util.RandomGaussianBlur(),
+                image_util.RandomHorizontalFlip(),
+                image_util.Crop([465, 465], crop_type='rand', padding=mean, ignore_label=255),
+                image_util.ToTensor(),
+                image_util.Normalize(mean=mean, std=std)
+            ])
+
+        else:
+            self.point_transform = transforms.Compose(
+                [
+                    data_util.PointcloudToTensor(),
+                    data_util.PointcloudNormalize(radius=1),
+                    data_util.PointcloudSample(total=num_points, sample=sample_points, permute=False)
+                ]
+            )
+
+            self.image_transform = image_util.Compose([
+                image_util.Crop([465, 465], crop_type='center', padding=mean, ignore_label=255),
+                image_util.ToTensor(),
+                image_util.Normalize(mean=mean, std=std)
+            ])
+
         Path(os.path.join(self.root, self.processed_folder, 'upper')).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(self.root, self.processed_folder, 'lower')).mkdir(parents=True, exist_ok=True)
         if not self._is_processed() or force_process:
@@ -65,11 +103,12 @@ class Teeth3DSDataset(Dataset):
         for f in split_files:
             with open(f'.datasets/teeth3ds/Teeth3DS_split/{f}') as file:
                 for l in file:
-                    l = f'{l.rstrip()}_process.ply'
-                    if 'lower' in l:
-                        self.file_names.append(os.path.join(self.root, self.processed_folder, 'lower', l))
-                    elif 'upper' in l:
-                        self.file_names.append(os.path.join(self.root, self.processed_folder, 'upper', l))
+                    l = f'{l.rstrip()}'
+                    l_name = l.split('_')[0]
+                    l_view = l_name.split('_')[1]
+
+                    self.file_names.append(os.path.join(self.root, self.processed_folder, l_view, l_name))
+
 
 
     
@@ -150,6 +189,9 @@ class Teeth3DSDataset(Dataset):
                 for root, dirs, files in os.walk(root_mesh_folder):
                     for file in files:
                         if file.endswith(".obj"):
+                            file_name = file.replace('.obj', '')
+                            file_id = file_name.split('_')[0]
+                            file_view = file_name.split('_')[1]
                             mesh = trimesh.load(os.path.join(root, file))
 
                             with open(os.path.join(root, file).replace('.obj', '.json')) as f:
@@ -163,10 +205,8 @@ class Teeth3DSDataset(Dataset):
                             mesh, labels = self._donwscale_mesh(mesh, labels)
                             fn = file.replace('.obj', '')
 
-                            if 'upper' in fn:
-                                save_path = os.path.join(self.root, self.processed_folder, 'upper', f"{fn}_process.ply")
-                            elif 'lower' in fn:
-                                save_path = os.path.join(self.root, self.processed_folder, 'lower', f"{fn}_process.ply")
+                            save_path = os.path.join(self.root, self.processed_folder, file_view, file_id,  f"{fn}_process.ply")
+
                             mask = []
                             for label in labels:
                                 if 'upper' in fn:
@@ -197,8 +237,9 @@ class Teeth3DSDataset(Dataset):
 
     def _get_data(self, file_path):
         
-        mesh = trimesh.load(file_path)
-            
+        mesh_path = f'{file_path}_process.ply'
+        mesh = trimesh.load(mesh_path)
+
         point_coords = np.array(mesh.vertices)
         face_info = np.array(mesh.faces)
 
@@ -221,32 +262,51 @@ class Teeth3DSDataset(Dataset):
             pointcloud = np.concatenate((pointcloud, padding), axis=0)
 
         # labels
-        labels = load_color_from_ply(file_path)
+        labels = load_color_from_ply(mesh_path)
 
 
         pointcloud, labels, face_info = self.point_transform([pointcloud, labels, face_info])
 
+        # image
+        image_path_ls = glob(os.path.join(file_path, 'render', '*.png')), 
+        label_path_ls = glob(os.path.join(file_path, 'mask', '*.png'))
+        renders, masks = [], []
+        for image_path, label_path in zip(image_path_ls, label_path_ls):
+            image = cv2.imread(image_path, cv2.IMREAD_COLOR)  # BGR 3 channel ndarray wiht shape H * W * 3
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
+            image = np.float32(image)
+            label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)  # GRAY 1 channel ndarray with shape H * W
+            if image.shape[0] != label.shape[0] or image.shape[1] != label.shape[1]:
+                raise (RuntimeError("Image & label shape mismatch: " + image_path + " " + label_path + "\n"))
+            if self.image_transform is not None:
+                image, label = self.image_transform(image, label)
+            renders.append(image)
+            masks.append(label)
+        
+        renders = torch.stack(renders, dim=0)  # (N, C, H, W)
+        masks = torch.stack(masks, dim=0)  # (N, H, W)
 
-        return pointcloud, labels, point_coords, face_info
+
+        return pointcloud, labels, point_coords, face_info, renders, masks
     
     def _load_in_memory(self):
         for f in tqdm(self.file_names, desc="Loading point clouds into memory"):
-            pointcloud, labels, point_coords, faces = self._get_data(f)
-            self.in_memory_data.append((pointcloud, labels, point_coords, faces, os.path.basename(f)))
+            pointcloud, labels, point_coords, faces, renders, masks = self._get_data(f)
+            self.in_memory_data.append((pointcloud, labels, point_coords, faces, renders, masks, os.path.basename(f)))
 
     def __len__(self):
         return len(self.file_names)
 
     def __getitem__(self, index):
         if self.in_memory:
-            (pointcloud, labels, point_coords, faces, file_name) = self.in_memory_data[index]
+            (pointcloud, labels, point_coords, faces, renders, masks, file_name) = self.in_memory_data[index]
         
         else:
             f = self.file_names[index]
-            pointcloud, labels, point_coords, faces = self._get_data(f)
+            pointcloud, labels, point_coords, faces, renders, masks = self._get_data(f)
             file_name = os.path.basename(f)
 
-        return pointcloud, labels, point_coords, faces, file_name
+        return pointcloud, labels, point_coords, faces, renders, masks, file_name
 
             
         

@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+
 class PointcloudToTensor(object):
     def __call__(self, data):
         points, labels, faces = data
@@ -29,11 +30,24 @@ class PointcloudNormalize(object):
 
 
 class PointcloudSample(object):
-    def __init__(self, total=16000, sample=10000):
+    def __init__(self, total=16000, sample=10000, permute=True):
         self.total = total
         self.sample = sample
+        self.permute = permute
 
     def __call__(self, data):
         points, labels, faces = data
-        sample = np.random.permutation(self.total)[:self.sample]
-        return (points[sample], labels[sample], faces[sample])
+        if self.permute:
+            permute = np.random.permutation(self.total)[:self.sample]
+            points = points[permute]
+            labels = labels[permute]
+            faces = faces[permute]
+        else:
+            if self.sample < self.total:
+                points = points[:self.sample]
+                labels = labels[:self.sample]
+                faces = faces[:self.sample]
+
+        return (points, labels, faces)
+    
+

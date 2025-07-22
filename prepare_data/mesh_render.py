@@ -1,11 +1,13 @@
 import math
+import os
 import os.path
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pyrender
 import trimesh
-from utils import color2label
+from utils.other_utils import color2label
 
 
 def m3dLookAt(eye, target, up):
@@ -24,17 +26,15 @@ def m3dLookAt(eye, target, up):
     ])
 
 
-def render(model_path, label_path, save_path, rend_size=(256, 256)):
-    print(model_path)
+def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
     base_name = os.path.basename(model_path)[:-4]
 
-    os.makedirs(os.path.join(save_path, base_name), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'img'), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'label'), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'curv'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'render'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'mask'), exist_ok=True)
 
-    fuze_trimesh = trimesh.load(model_path)
-    vertices = np.asarray(fuze_trimesh.vertices)
+    label_trimesh = trimesh.load(model_path)
+    # fuze_trimesh = trimesh.load(model_path)
+    vertices = np.asarray(label_trimesh.vertices)
     minCoord = np.min(vertices, axis=0)
     maxCoord = np.max(vertices, axis=0)
     meanCoord = np.mean(vertices, axis=0)
@@ -62,12 +62,11 @@ def render(model_path, label_path, save_path, rend_size=(256, 256)):
                 theta,
                 beta
             ))
-            beta += math.pi / 9
-        theta += math.pi / 12
+            beta += math.pi / rend_step[0]
+        theta += math.pi / rend_step[1]
 
     # 创建模型
-    pyrender_mesh = pyrender.Mesh.from_trimesh(fuze_trimesh)
-    label_trimesh = trimesh.load(label_path)
+    pyrender_mesh = pyrender.Mesh.from_trimesh(label_trimesh)
 
     # 创建场景
     scene = pyrender.Scene()
@@ -75,6 +74,8 @@ def render(model_path, label_path, save_path, rend_size=(256, 256)):
 
     # 场景添加模型
     scene.add(pyrender_mesh)
+
+
     seg_node_map = {}
     vertex_instances = {}
     label_color_map = {}
@@ -87,24 +88,69 @@ def render(model_path, label_path, save_path, rend_size=(256, 256)):
                 vertex_instances[vertex_label] = {}
             vertex_instances[vertex_label][i] = len(vertex_instances[vertex_label])
             label_color_map[vertex_label] = vertex_color
+
+    face_instances = {}
+    if 'face' in label_trimesh.metadata['_ply_raw']:
+        face_meta = label_trimesh.metadata['_ply_raw']['face']
+        if 'red' in face_meta['data'] and 'green' in face_meta['data'] and 'blue' in face_meta['data']:
+            face_colors = np.stack([
+                face_meta['data']['red'],
+                face_meta['data']['green'],
+                face_meta['data']['blue']
+            ], axis=-1).squeeze(1)  # shape: (N_faces, 3)
+
     for i, face in enumerate(label_trimesh.faces):
-        for label, vertices in vertex_instances.items():
-            if face[0] in vertices and face[1] in vertices and face[2] in vertices:
-                if not label in face_instances:
-                    face_instances[label] = []
-                face_instances[label].append([vertices[face[0]], vertices[face[1]], vertices[face[2]]])
-    for label, vertices in vertex_instances.items():
+        face_color = tuple(face_colors[i])  # 取RGB，忽略alpha
+
+        if face_color in color2label:
+            label = color2label[face_color][2]  # 直接根据颜色取 label
+
+            if label not in face_instances:
+                face_instances[label] = []
+
+            # 注意：此时 face 是原始 mesh 的顶点索引，我们稍后再映射到局部
+            face_instances[label].append(face)
+    for label, faces in face_instances.items():
+        # 收集所有该 label 用到的顶点索引
+        vertex_indices = set([vid for f in faces for vid in f])
+
+        # 构建原始顶点到局部顶点的映射
+        vertex_idx_map = {v: i for i, v in enumerate(vertex_indices)}
+
+        # 构建局部顶点和三角形索引
+        vertice_node = np.array([label_trimesh.vertices[v] for v in vertex_indices])
+        face_node = np.array([[vertex_idx_map[v] for v in f] for f in faces])
+
         label_color = label_color_map[label]
-        label_color = [label_color[0], label_color[1], label_color[2]]
-        vertice_node = np.array([label_trimesh.vertices[i] for i, _ in vertices.items()], dtype=float)
         vertice_color_node = np.array([label_color] * vertice_node.shape[0])
-        face_node = np.array(face_instances[label])
         face_color_node = np.array([label_color] * face_node.shape[0])
+
         mesh_node = trimesh.Trimesh(vertices=vertice_node, faces=face_node, vertex_colors=vertice_color_node, face_colors=face_color_node)
 
         # 当前模型添加到场景中
         node = label_scene.add(pyrender.Mesh.from_trimesh(mesh_node))
         seg_node_map[node] = label_color
+
+
+
+    # for i, face in enumerate(label_trimesh.faces):
+    #     for label, vertices in vertex_instances.items():
+    #         if face[0] in vertices and face[1] in vertices and face[2] in vertices:
+    #             if not label in face_instances:
+    #                 face_instances[label] = []
+    #             face_instances[label].append([vertices[face[0]], vertices[face[1]], vertices[face[2]]])
+    # for label, vertices in vertex_instances.items():
+    #     label_color = label_color_map[label]
+    #     label_color = [label_color[0], label_color[1], label_color[2]]
+    #     vertice_node = np.array([label_trimesh.vertices[i] for i, _ in vertices.items()], dtype=float)
+    #     vertice_color_node = np.array([label_color] * vertice_node.shape[0])
+    #     face_node = np.array(face_instances[label])
+    #     face_color_node = np.array([label_color] * face_node.shape[0])
+    #     mesh_node = trimesh.Trimesh(vertices=vertice_node, faces=face_node, vertex_colors=vertice_color_node, face_colors=face_color_node)
+
+    #     # 当前模型添加到场景中
+    #     node = label_scene.add(pyrender.Mesh.from_trimesh(mesh_node))
+    #     seg_node_map[node] = label_color
 
     # 添加光源
     light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=2.0)
@@ -127,16 +173,16 @@ def render(model_path, label_path, save_path, rend_size=(256, 256)):
         camera_node = scene.add(camera, pose=camera_pos[0])
         color, depth = r.render(scene)
         scene.remove_node(camera_node)
-        plt.imsave(os.path.join(save_path, base_name, 'img', f'{base_name}_{i}.png'), color)
+        plt.imsave(os.path.join(save_path, 'render', f'{base_name}_{i}.png'), color)
 
         # 渲染分割标签
         camera_node = label_scene.add(camera, pose=camera_pos[0])
         color, depth = r.render(label_scene, flags=pyrender.RenderFlags.SEG, seg_node_map=seg_node_map)
         label_scene.remove_node(camera_node)
-        plt.imsave(os.path.join(save_path, base_name, 'label', f'{base_name}_{i}.png'), color)
+        plt.imsave(os.path.join(save_path, 'mask', f'{base_name}_{i}.png'), color)
 
 
-    with open(os.path.join(os.path.join(save_path, base_name, f'{base_name}_angle.txt')), 'w',
+    with open(os.path.join(os.path.join(save_path, f'{base_name}_render_view.txt')), 'w',
               encoding='ascii') as f:
         f.write(angle_info)
 
@@ -145,13 +191,8 @@ def render(model_path, label_path, save_path, rend_size=(256, 256)):
 
 if __name__ == '__main__':
 
-    obj_path = ""
-    ply_cell_color_path = ""
-    save_path = ""
-    for file in os.listdir(obj_path):
-        if '.ply' in file:
-            mesh_path = os.path.join(obj_path, file)
-            label_path = os.path.join(ply_cell_color_path, file[:-4] + '.ply')
-            render(mesh_path, label_path, save_path, rend_size=(1024, 1024))
+    ply_cell_color_path = 'tmp/YBSESUN6_upper_gt.ply'
+    save_path = "tmp/YBSESUN6_upper_gt"
+    render(ply_cell_color_path, save_path, rend_size=(1024, 1024), rend_step=(6, 9))
 
 

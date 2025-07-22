@@ -44,4 +44,5 @@ vertex_mask = np.array(vertex_mask, dtype=np.uint8)  # shape: (N, 3)
 point_coords = mesh.vertices                # shape: (n_vertices, 3)
 face_info = mesh.faces                      # shape: (n_faces, 3)
 output_pred_ply(mask, None, save_path, point_coords, face_info, vertex_mask)
-# %%
+
+

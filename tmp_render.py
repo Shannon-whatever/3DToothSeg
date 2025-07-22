@@ -26,17 +26,15 @@ def m3dLookAt(eye, target, up):
     ])
 
 
-def render(model_path, save_path, rend_size=(256, 256)):
-    print(model_path)
+def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
     base_name = os.path.basename(model_path)[:-4]
 
-    os.makedirs(os.path.join(save_path, base_name), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'img'), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'label'), exist_ok=True)
-    os.makedirs(os.path.join(save_path, base_name, 'curv'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'render'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'mask'), exist_ok=True)
 
-    fuze_trimesh = trimesh.load(model_path)
-    vertices = np.asarray(fuze_trimesh.vertices)
+    label_trimesh = trimesh.load(model_path)
+    # fuze_trimesh = trimesh.load(model_path)
+    vertices = np.asarray(label_trimesh.vertices)
     minCoord = np.min(vertices, axis=0)
     maxCoord = np.max(vertices, axis=0)
     meanCoord = np.mean(vertices, axis=0)
@@ -64,12 +62,11 @@ def render(model_path, save_path, rend_size=(256, 256)):
                 theta,
                 beta
             ))
-            beta += math.pi / 9
-        theta += math.pi / 12
+            beta += math.pi / rend_step[0]
+        theta += math.pi / rend_step[1]
 
     # 创建模型
-    pyrender_mesh = pyrender.Mesh.from_trimesh(fuze_trimesh)
-    label_trimesh = trimesh.load(model_path)
+    pyrender_mesh = pyrender.Mesh.from_trimesh(label_trimesh)
 
     # 创建场景
     scene = pyrender.Scene()
@@ -176,16 +173,16 @@ def render(model_path, save_path, rend_size=(256, 256)):
         camera_node = scene.add(camera, pose=camera_pos[0])
         color, depth = r.render(scene)
         scene.remove_node(camera_node)
-        plt.imsave(os.path.join(save_path, base_name, 'img', f'{base_name}_{i}.png'), color)
+        plt.imsave(os.path.join(save_path, 'render', f'{base_name}_{i}.png'), color)
 
         # 渲染分割标签
         camera_node = label_scene.add(camera, pose=camera_pos[0])
         color, depth = r.render(label_scene, flags=pyrender.RenderFlags.SEG, seg_node_map=seg_node_map)
         label_scene.remove_node(camera_node)
-        plt.imsave(os.path.join(save_path, base_name, 'label', f'{base_name}_{i}.png'), color)
+        plt.imsave(os.path.join(save_path, 'mask', f'{base_name}_{i}.png'), color)
 
 
-    with open(os.path.join(os.path.join(save_path, base_name, f'{base_name}_angle.txt')), 'w',
+    with open(os.path.join(os.path.join(save_path, f'{base_name}_render_view.txt')), 'w',
               encoding='ascii') as f:
         f.write(angle_info)
 
@@ -196,6 +193,6 @@ if __name__ == '__main__':
 
     ply_cell_color_path = 'tmp/YBSESUN6_upper_gt.ply'
     save_path = "tmp"
-    render(ply_cell_color_path, save_path, rend_size=(1024, 1024))
+    render(ply_cell_color_path, save_path, rend_size=(1024, 1024), rend_step=(6, 9))
 
 

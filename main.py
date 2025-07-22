@@ -67,7 +67,7 @@ class ToothSegmentationPipeline:
             total_loss = 0.0
             loop = tqdm(train_dataloader, desc=f"Epoch [{epoch+1}/{self.args.epochs}]", leave=False)
 
-            for batch_idx, (pointcloud, labels, point_coords, face_info, file_name) in enumerate(loop):
+            for batch_idx, (pointcloud, labels, point_coords, face_info, renders, masks, file_name) in enumerate(loop):
                 pointcloud = pointcloud.to(self.device).permute(0, 2, 1).contiguous()
                 labels = labels.to(self.device)
 
@@ -101,11 +101,11 @@ class ToothSegmentationPipeline:
                 torch.save(model.state_dict(), save_path)
                 print(f"Saved model checkpoint to {save_path}")
 
-    def predict(self, dataloader, model, current_epoch=None, log=None, use_pretrained=False):
-
-        pretrained_dict = torch.load(self.args.pretrain_model_path)
-        if use_pretrained:
-            print(f"Loading pretrained model from {self.args.pretrain_model_path}")
+    def predict(self, dataloader, model, current_epoch=None, log=None, use_pretrained='models/PTv1/point_best_model.pth'):
+ 
+        if use_pretrained is not None:
+            pretrained_dict = torch.load(use_pretrained)
+            print(f"Loading pretrained model from {use_pretrained}")
             model.load_state_dict(pretrained_dict)
 
         model.eval()
@@ -125,7 +125,7 @@ class ToothSegmentationPipeline:
         # pointcloud = pointcloud.permute(0, 2, 1).contiguous()
 
         with torch.no_grad():
-            for pointcloud, labels, point_coords, face_info, file_name in dataloader:
+            for pointcloud, labels, point_coords, face_info, renders, masks, file_name in dataloader:
                 pointcloud = pointcloud.to(self.device).permute(0, 2, 1).contiguous()
                 point_seg_result, _ = model(pointcloud)
                 pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
@@ -154,20 +154,26 @@ class ToothSegmentationPipeline:
         labels = []
         point_coords_list = []
         face_infos = []
+        renders = []
+        masks = []
         file_names = []
 
-        for pc, label, p_coords, f_info, file_name in batch:
+        for pc, label, p_coords, f_info, render, mask, file_name in batch:
             pointclouds.append(pc)
             labels.append(label)
             point_coords_list.append(p_coords)  # 不堆叠，保留为 list of np.array
             face_infos.append(f_info)
+            renders.append(render)
+            masks.append(mask)
             file_names.append(file_name)
 
         # 堆叠固定 shape 的数据
         pointclouds = torch.stack(pointclouds)  # (B, num_points, 6)
         labels = torch.stack(labels)            # (B, num_points)
+        renders = torch.stack(renders)          # (B, N, C, H, W)
+        masks = torch.stack(masks)              # (B, N, H, W)
 
-        return pointclouds, labels, point_coords_list, face_infos, file_names
+        return pointclouds, labels, point_coords_list, face_infos, renders, masks, file_names
     
 def get_args():
     parser = argparse.ArgumentParser()
