@@ -1,22 +1,28 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.PTv1.point_transformer_seg import PointTransformerSeg38
 from models.Seg2d.pspnet import PSPNet
+from utils.other_utils import color2label
 
 
 class ToothSegNet(nn.Module):
     def __init__(self, in_channels=6, num_classes=17, 
                  use_pretrain_3d='models/PTv1/point_best_model.pth', 
-                 use_pretrain_2d='.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth'):
+                 use_pretrain_2d='.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth',
+                 is_train=False):
         super().__init__()
 
+        self.is_train = is_train
+        if is_train:
+            use_pretrain_3d = None
         self.seg_model_3d = PointTransformerSeg38(
             in_channels=in_channels, num_classes=num_classes,
-            pretrain=False, enable_pic_feat=False
+            pretrain=False, add_cbl=True, enable_pic_feat=True
         )
 
-        self.seg_model_2d = PSPNet(layers=50, classes=num_classes, zoom_factor=8, use_ppm=True, pretrained=True)
+        self.seg_model_2d = PSPNet(layers=50, classes=num_classes+1, zoom_factor=8, use_ppm=True, pretrained=True, output_intermediate=False)
 
 
         if use_pretrain_3d is not None:
@@ -36,12 +42,168 @@ class ToothSegNet(nn.Module):
 
             self.seg_model_2d.load_state_dict(pretrained_weights, strict=False)
 
-    def forward(self, pointcloud, renders):
+    def project_points(self, cameras_Rt, cameras_K, points, render_size, 
+                       normalize=False):
+        """
+        cameras_Rt: (B, N_v, 4, 4)
+        cameras_K:  (B, N_v, 3, 3)
+        points:     (B, N_pc, 3)
+        render_size: (H, W)
 
-        pointcloud = pointcloud.permute(0, 2, 1).contiguous()
-        renders = renders.reshape(-1, renders.shape[2], renders.shape[3], renders.shape[4])
+        Returns:
+            projected points: (B, N_v, N_pc, 2)
+        """
+        B, N_v, _, _ = cameras_Rt.shape
+        _, N_pc, _ = points.shape
 
-        predict_2d_masks = self.seg_model_2d(renders)
-        predict_pc_labels, _ = self.seg_model_3d(pointcloud)
+        # 1. 变成齐次坐标 (B, N_pc, 4)
+        ones = torch.ones((B, N_pc, 1), device=points.device, dtype=points.dtype)
+        points_homo = torch.cat([points, ones], dim=-1)  # (B, N_pc, 4)
 
-        return predict_2d_masks, predict_pc_labels
+        # 2. 扩展维度对齐视角：-> (B, N_v, N_pc, 4)
+        points_homo = points_homo[:, None, :, :]  # (B, 1, N_pc, 4)
+        points_homo = points_homo.expand(-1, N_v, -1, -1)
+
+        # 3. 相机变换（外参）：(B, N_v, 3, 4) x (B, N_v, N_pc, 4)^T
+        Rt = cameras_Rt[:, :, :3, :]  # (B, N_v, 3, 4)
+        point_cam = torch.matmul(Rt, points_homo.unsqueeze(-1))  # (B, N_v, N_pc, 3, 1)
+        point_cam = point_cam.squeeze(-1)  # (B, N_v, N_pc, 3)
+
+        # 4. 相机内参投影：K @ point_cam
+        K = cameras_K  # (B, N_v, 3, 3)
+        point_img = torch.matmul(K, point_cam.unsqueeze(-1))  # (B, N_v, N_pc, 3, 1)
+        point_img = point_img.squeeze(-1)  # (B, N_v, N_pc, 3)
+
+        # 5. 归一化：除以z
+        img_x = point_img[..., 0] / (point_img[..., 2] + 1e-6) # x is w
+        img_y = point_img[..., 1] / (point_img[..., 2] + 1e-6) # y is h
+
+
+        img_points = torch.stack([img_y, render_size[0] - img_x], dim=-1)  # (B, N_v, N_pc, 2) 2: h, w
+
+        if normalize:
+            # 归一化到 [-1， 1]
+            img_points[..., 0] = (img_points[..., 0] / (render_size[1] - 1)) * 2 - 1
+            img_points[..., 1] = (img_points[..., 1] / (render_size[0] - 1)) * 2 - 1
+
+        return img_points
+
+    def sample_point_features_from_2d(img_points, feature_2d):
+        """
+        使用 grid_sample 根据图像坐标提取点的 2D 特征，并进行视角平均。
+        
+        Args:
+            img_points: (B, N_v, N_pc, 2), 图像坐标范围 [-1, 1]
+            feature_2d: (B, N_v, C, H, W), 特征图
+
+        Returns:
+            (B, N_pc, C), 每个点的视角平均特征
+        """
+        B, N_v, N_pc, _ = img_points.shape
+        _, _, C, H, W = feature_2d.shape
+
+        # 1. 将 2D 坐标从像素坐标转换为 grid_sample 所需的归一化坐标 [-1, 1]
+        # 假设 img_points 原本是像素坐标，需要归一化：
+        # img_points[..., 0] in [0, W-1] -> [-1, 1]
+        # img_points[..., 1] in [0, H-1] -> [-1, 1]
+        # 否则如果已经归一化就跳过这步
+        # img_points[..., 0] = (img_points[..., 0] / (W - 1)) * 2 - 1
+        # img_points[..., 1] = (img_points[..., 1] / (H - 1)) * 2 - 1
+
+        # 2. 构建 grid: (B*N_v, N_pc, 1, 2)
+        grid = img_points.view(B * N_v, N_pc, 1, 2)  # (B*N_v, N_pc, 1, 2)
+
+        # 3. 准备 features: (B*N_v, C, H, W)
+        features = feature_2d.view(B * N_v, C, H, W)
+
+        # 4. 采样: (B*N_v, C, N_pc, 1)
+        sampled = F.grid_sample(features, grid, mode='bilinear', align_corners=True)  # (B*N_v, C, N_pc, 1)
+        sampled = sampled.squeeze(-1).permute(0, 2, 1)  # (B*N_v, N_pc, C)
+
+        # 5. reshape 回 (B, N_v, N_pc, C)
+        sampled = sampled.view(B, N_v, N_pc, C)
+
+        # 6. 对视角维度 N_v 平均 → (B, N_pc, C)
+        point_features = sampled.mean(dim=1)
+
+        return point_features
+
+    def get_pixel_labels_from_gt(pixel_coords, masks, default_label=0):
+        """
+        Args:
+            pixel_coords: (B, N_v, N_pc, 2), 取值范围在 [0, H-1], [0, W-1]
+            masks: (B, N_v, 17+1, H, W)  # mask: prob for each class
+            color2label: dict of {(r,g,b): label_idx}
+            default_label: 默认标签
+        Returns:
+            labels: (B, N_pc, 1)
+        """
+        B, N_v, N_pc, _ = pixel_coords.shape
+        _, _, _, H, W = masks.shape
+
+        device = pixel_coords.device
+        pixel_coords = pixel_coords.long()
+        pixel_coords[..., 0] = pixel_coords[..., 0].clamp(0, H - 1)
+        pixel_coords[..., 1] = pixel_coords[..., 1].clamp(0, W - 1)
+
+        # 准备展开索引
+        batch_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, N_v, N_pc)
+        view_idx = torch.arange(N_v, device=device).view(1, N_v, 1).expand(B, N_v, N_pc)
+        pc_idx = torch.arange(N_pc, device=device).view(1, 1, N_pc).expand(B, N_v, N_pc)
+        h_idx = pixel_coords[..., 0]
+        w_idx = pixel_coords[..., 1]
+
+        # 获取对应像素的 RGB 值，输出形状：(B, N_v, N_pc, 3)
+        rgb_vals = masks.permute(0,1,3,4,2)[batch_idx, view_idx, h_idx, w_idx]  # (B, N_v, N_pc, 3)
+
+        # 初始化 label tensor
+        label_tensor = torch.full((B, N_v, N_pc), default_label, dtype=torch.long, device=device)
+
+        # 将 color2label 转换为 tensor 进行批量匹配
+        color_list = torch.tensor(list(color2label.keys()), dtype=torch.uint8, device=device)  # (N_cls, 3)
+        label_list = torch.tensor(list(color2label.values()), dtype=torch.long, device=device)  # (N_cls,)
+
+        # 计算匹配掩码：逐颜色匹配 (B, N_v, N_pc, N_cls)
+        rgb_vals_expand = rgb_vals.unsqueeze(-2)  # (B, N_v, N_pc, 1, 3)
+        color_list_expand = color_list.view(1, 1, 1, -1, 3)  # (1, 1, 1, N_cls, 3)
+        matches = (rgb_vals_expand == color_list_expand).all(dim=-1)  # (B, N_v, N_pc, N_cls)
+
+        # 将匹配掩码转换为标签值（只保留第一个匹配）
+        matched_label = matches @ label_list  # (B, N_v, N_pc)
+
+        # 将匹配到的 label 替换到 label_tensor 中（没有匹配的保持 default_label）
+        has_match = matches.any(dim=-1)  # (B, N_v, N_pc)
+        label_tensor[has_match] = matched_label[has_match]
+
+        # 对 N_v 维度进行众数投票
+        mode_labels, _ = torch.mode(label_tensor, dim=1)  # (B, N_pc)
+
+        return mode_labels.unsqueeze(-1)  # (B, N_pc, 1)
+
+
+    def forward(self, pointcloud, renders, cameras_Rt, cameras_K):
+
+        
+        renders = renders.reshape(-1, renders.shape[2], renders.shape[3], renders.shape[4]) # (B, N_v, C, H, W) -> (B*N_v, C, H, W)
+        render_size = renders.shape[-1]
+
+
+        if self.is_train:
+            # get 2d feature and 2d mask prediction
+            predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d(renders)
+            # cameras_Rt (B, N_v, 4, 4), cameras_K (B, N_v, 3, 3)
+            # 注意投影的时候点云坐标不能是标准化后的
+            projected_pc = self.project_points(cameras_Rt, cameras_K, pointcloud[:, :, :3], render_size)  # (B, N_v, N_pc, 2)
+            # point_features_2d = self.sample_point_features_from_2d(projected_pc, feature_2d) # (B, N_pc, C)
+            point_features_2d = self.get_pixel_labels(projected_pc, predict_2d_masks) # (B, N_pc, 1)
+
+            # 只取标准化后的点云坐标和法相
+            predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pointcloud[:, :, 3:], point_to_pixel_feat=point_features_2d)
+            return predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux
+        
+        else:
+            raise NotImplementedError("Inference mode is not implemented yet.")
+            # predict_2d_masks = self.seg_model_2d(renders)
+            # predict_pc_labels, _ = self.seg_model_3d(pointcloud)
+
+            # return predict_2d_masks, predict_pc_labels

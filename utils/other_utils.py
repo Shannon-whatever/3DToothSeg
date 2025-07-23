@@ -323,3 +323,37 @@ def face_labels_to_vertex_labels(faces, face_labels, num_vertices):
             vertex_labels[v] = -1  # 或者设置为无标签标识
 
     return vertex_labels
+
+
+def rgb_mask_to_onehot(mask_tensor, num_classes=17):
+    """
+    将 RGB mask 转换为 one-hot 编码 label tensor。
+    
+    参数:
+        mask_tensor: torch.Tensor, shape=(3, H, W)
+        color2label: dict, key=(R,G,B) tuple, value=label id
+        num_classes: int, 类别总数
+
+    返回:
+        onehot_mask: torch.Tensor, shape=(num_classes, H, W)
+    """
+    H, W = mask_tensor.shape[1], mask_tensor.shape[2]
+    label_map = torch.full((H, W), fill_value=num_classes) # 17 is background
+
+    # 转换成 (H, W, 3)
+    mask_np = mask_tensor.permute(1, 2, 0).cpu().numpy()
+
+    # 遍历 color2label 映射
+    for color, label_id in color2label.items():
+        match = (mask_np == color).all(axis=-1)  # shape: (H, W), bool
+        # print(label_id, np.any(match), np.count_nonzero(match))
+        label_map[match] = label_id[-1]
+
+    # # 检查是否有未映射像素
+    # if (label_map == -1).any():
+    #     print("Warning: some pixels do not match any color in color2label")
+
+    # 转 one-hot
+    one_hot = torch.nn.functional.one_hot(label_map.clamp(min=0), num_classes=num_classes+1)  # (H, W, C)
+    one_hot = one_hot.permute(2, 0, 1)  # (C, H, W)
+    return one_hot.long()

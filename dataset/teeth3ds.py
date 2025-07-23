@@ -17,6 +17,7 @@ from dataset import data_util
 from dataset import image_util
 from utils.mesh_io import filter_files
 from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply, face_labels_to_vertex_labels
+from utils.other_utils import rgb_mask_to_onehot
 
 
 
@@ -105,7 +106,7 @@ class Teeth3DSDataset(Dataset):
                 for l in file:
                     l = f'{l.rstrip()}'
                     l_name = l.split('_')[0]
-                    l_view = l_name.split('_')[1]
+                    l_view = l.split('_')[1]
 
                     self.file_names.append(os.path.join(self.root, self.processed_folder, l_view, l_name))
 
@@ -171,16 +172,18 @@ class Teeth3DSDataset(Dataset):
         for view in self.mesh_view:
             raw_mesh_folder = os.path.join(self.root, view)
             process_mesh_folder = os.path.join(self.root, self.processed_folder, view)
-            files_processed.extend(filter_files(process_mesh_folder, 'ply'))
+            files_processed.extend(filter_files(process_mesh_folder, '_process.ply'))
             files_raw.extend(filter_files(raw_mesh_folder, 'obj'))
         return len(files_processed) == len(files_raw)
 
     def _process(self):
-        for f in filter_files(os.path.join(self.root, self.processed_folder), 'ply'):
-            if 'upper' in f:
-                os.remove(os.path.join(self.root, self.processed_folder, 'upper', f))
-            elif 'lower' in f:
-                os.remove(os.path.join(self.root, self.processed_folder, 'lower', f))
+        # for f in filter_files(os.path.join(self.root, self.processed_folder), 'ply'):
+        #     file_name = f.replace('.ply', '')
+        #     file_id = file_name.split('_')[0]
+        #     file_view = file_name.split('_')[1]
+        #     if os.path.exists(os.path.join(self.root, self.processed_folder, file_view, file_id, f)):
+        #         os.remove(os.path.join(self.root, self.processed_folder, file_view, file_id, f))
+
         total_files = self._count_total_obj_files()
 
         with tqdm(total=total_files, desc="Processing meshes") as pbar:
@@ -237,7 +240,8 @@ class Teeth3DSDataset(Dataset):
 
     def _get_data(self, file_path):
         
-        mesh_path = f'{file_path}_process.ply'
+        file_name = f'{file_path.split("/")[-1]}_{file_path.split("/")[-2]}'
+        mesh_path = os.path.join(file_path, f'{file_name}_process.ply')
         mesh = trimesh.load(mesh_path)
 
         point_coords = np.array(mesh.vertices)
@@ -268,45 +272,69 @@ class Teeth3DSDataset(Dataset):
         pointcloud, labels, face_info = self.point_transform([pointcloud, labels, face_info])
 
         # image
-        image_path_ls = glob(os.path.join(file_path, 'render', '*.png')), 
-        label_path_ls = glob(os.path.join(file_path, 'mask', '*.png'))
+        image_path_ls = sorted(glob(os.path.join(file_path, 'render', '*.png'))) 
+        label_path_ls = sorted(glob(os.path.join(file_path, 'mask', '*.png')))
         renders, masks = [], []
         for image_path, label_path in zip(image_path_ls, label_path_ls):
             image = cv2.imread(image_path, cv2.IMREAD_COLOR)  # BGR 3 channel ndarray wiht shape H * W * 3
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
             image = np.float32(image)
-            label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)  # GRAY 1 channel ndarray with shape H * W
+            label = cv2.imread(label_path, cv2.IMREAD_COLOR)  # BGR 3 channel ndarray with shape H * W * 3
+            label = cv2.cvtColor(label, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
+            label = np.float32(label)
             if image.shape[0] != label.shape[0] or image.shape[1] != label.shape[1]:
                 raise (RuntimeError("Image & label shape mismatch: " + image_path + " " + label_path + "\n"))
             if self.image_transform is not None:
                 image, label = self.image_transform(image, label)
+
+
+            # label color to label id
+            label = rgb_mask_to_onehot(label)
             renders.append(image)
             masks.append(label)
         
         renders = torch.stack(renders, dim=0)  # (N, C, H, W)
-        masks = torch.stack(masks, dim=0)  # (N, H, W)
+        masks = torch.stack(masks, dim=0)  # (N, C, H, W)
 
+        # cameras
+        with open(os.path.join(file_path, f'{file_name}_view.json'), 'r') as f:
+            camera_params = json.load(f)
 
-        return pointcloud, labels, point_coords, face_info, renders, masks
+        cameras_rt = torch.stack([torch.tensor(cam["Rt"], dtype=torch.float32) for cam in camera_params])
+        cameras_k = torch.stack([torch.tensor(cam["K"], dtype=torch.float32) for cam in camera_params])
+
+        return_dict = {
+            "pointcloud": pointcloud,
+            "labels": labels,
+            "point_coords": point_coords,
+            "face_info": face_info,
+            "renders": renders,
+            "masks": masks,
+            "cameras_Rt": cameras_rt,
+            "cameras_K": cameras_k
+        }
+
+        return return_dict
     
     def _load_in_memory(self):
         for f in tqdm(self.file_names, desc="Loading point clouds into memory"):
-            pointcloud, labels, point_coords, faces, renders, masks = self._get_data(f)
-            self.in_memory_data.append((pointcloud, labels, point_coords, faces, renders, masks, os.path.basename(f)))
+            data_dict = self._get_data(f)
+            data_dict.update({"file_names": os.path.basename(f)})
+            self.in_memory_data.append(data_dict)
 
     def __len__(self):
         return len(self.file_names)
 
     def __getitem__(self, index):
         if self.in_memory:
-            (pointcloud, labels, point_coords, faces, renders, masks, file_name) = self.in_memory_data[index]
+            data_dict = self.in_memory_data[index]
         
         else:
             f = self.file_names[index]
-            pointcloud, labels, point_coords, faces, renders, masks = self._get_data(f)
-            file_name = os.path.basename(f)
-
-        return pointcloud, labels, point_coords, faces, renders, masks, file_name
+            data_dict = self._get_data(f)
+            data_dict.update({"file_names": os.path.basename(f)})
+            
+        return data_dict
 
             
         

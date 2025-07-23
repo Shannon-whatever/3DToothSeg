@@ -7,7 +7,9 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import wandb
 
-from models.PTv1.point_transformer_seg import PointTransformerSeg38
+# from models.PTv1.point_transformer_seg import PointTransformerSeg38
+from loss.cbl import CBLLoss
+from models.main_network import ToothSegNet
 from dataset.teeth3ds import Teeth3DSDataset
 from utils.other_utils import output_pred_ply, label2color_lower
 
@@ -25,12 +27,12 @@ class ToothSegmentationPipeline:
 
         train_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=True, train_test_split=self.args.train_test_split, is_train=True,
+            force_process=False, train_test_split=self.args.train_test_split, is_train=True,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
         test_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=True, train_test_split=self.args.train_test_split, is_train=False,
+            force_process=False, train_test_split=self.args.train_test_split, is_train=False,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
 
@@ -48,18 +50,17 @@ class ToothSegmentationPipeline:
         return train_dataloader, test_dataloader
 
 
-    def build_model(self, num_classes):
-        model = PointTransformerSeg38(
-            in_channels=6, num_classes=num_classes,
-            pretrain=False, enable_pic_feat=False
-        ).to(self.device)
+    def build_model(self, num_classes, is_train=False):
+        model = ToothSegNet(
+            in_channels=6, num_classes=num_classes, is_train=is_train).to(self.device)
         return model
 
     def train(self, train_dataloader, test_dataloader, model, log=None):
 
         optimizer = torch.optim.Adam(model.parameters(), lr=self.args.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.args.epochs, eta_min=1e-6)
-        criterion = torch.nn.CrossEntropyLoss()
+        loss_ce = torch.nn.CrossEntropyLoss()
+        loss_cbl = CBLLoss().to(self.device)
         
 
         model.train()
@@ -67,14 +68,21 @@ class ToothSegmentationPipeline:
             total_loss = 0.0
             loop = tqdm(train_dataloader, desc=f"Epoch [{epoch+1}/{self.args.epochs}]", leave=False)
 
-            for batch_idx, (pointcloud, labels, point_coords, face_info, renders, masks, file_name) in enumerate(loop):
-                pointcloud = pointcloud.to(self.device).permute(0, 2, 1).contiguous()
-                labels = labels.to(self.device)
+            for batch_idx, batch_data in enumerate(loop):
+                pointcloud = batch_data['pointclouds'].to(self.device)
+                labels = batch_data['labels'].to(self.device)
+                renders = batch_data['renders'].to(self.device)
+                masks = batch_data['masks'].to(self.device)
+                cameras_Rt = batch_data['cameras_Rt'].to(self.device)
+                cameras_K = batch_data['cameras_K'].to(self.device)
 
                 optimizer.zero_grad()
 
-                outputs, _ = model(pointcloud)
-                loss = criterion(outputs, labels)
+                predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux = model(pointcloud, renders, cameras_Rt, cameras_K)
+                loss_3d = loss_ce(predict_pc_labels, labels)
+                loss_2d = loss_ce(predict_2d_masks, masks) + loss_ce(predict_2d_aux, masks)
+                loss_cbl = loss_cbl(cbl_loss_aux, labels)
+                loss = loss_2d + loss_3d + loss_cbl
 
                 loss.backward()
                 optimizer.step()
@@ -156,24 +164,52 @@ class ToothSegmentationPipeline:
         face_infos = []
         renders = []
         masks = []
+        cameras_Rt = []
+        cameras_K = []
         file_names = []
 
-        for pc, label, p_coords, f_info, render, mask, file_name in batch:
+        for data_dict in batch:
+            # 解包数据字典
+            pc = data_dict['pointcloud']
+            label = data_dict['labels']
+            p_coords = data_dict['point_coords']
+            f_info = data_dict['face_info']
+            render = data_dict['renders']
+            mask = data_dict['masks']
+            camera_Rt = data_dict['cameras_Rt']
+            camera_K = data_dict['cameras_K']
+            file_name = data_dict['file_names']
+
             pointclouds.append(pc)
             labels.append(label)
             point_coords_list.append(p_coords)  # 不堆叠，保留为 list of np.array
-            face_infos.append(f_info)
+            face_infos.append(f_info) # 保留为 list of np.array
             renders.append(render)
             masks.append(mask)
-            file_names.append(file_name)
+            cameras_Rt.append(camera_Rt)
+            cameras_K.append(camera_K)
+            file_names.append(file_name) # 保留为 list of str
 
         # 堆叠固定 shape 的数据
         pointclouds = torch.stack(pointclouds)  # (B, num_points, 6)
         labels = torch.stack(labels)            # (B, num_points)
-        renders = torch.stack(renders)          # (B, N, C, H, W)
-        masks = torch.stack(masks)              # (B, N, H, W)
+        renders = torch.stack(renders)          # (B, num_views, 3, H, W)
+        masks = torch.stack(masks)              # (B, num_views, 3, H, W)
+        cameras_Rt = torch.stack(cameras_Rt)    # (B, num_views, 4, 4)
+        cameras_K = torch.stack(cameras_K)      # (B, num_views, 3, 3)
 
-        return pointclouds, labels, point_coords_list, face_infos, renders, masks, file_names
+        return_dict = {
+            'pointclouds': pointclouds,
+            'labels': labels,
+            'point_coords': point_coords_list,  # 保持为 list of np.array
+            'face_infos': face_infos,
+            'renders': renders,
+            'masks': masks,
+            'cameras_Rt': cameras_Rt,
+            'cameras_K': cameras_K,
+            'file_names': file_names
+        }
+        return return_dict
     
 def get_args():
     parser = argparse.ArgumentParser()
@@ -210,11 +246,11 @@ if __name__ == "__main__":
     train_dataloader, test_dataloader = pipeline.get_dataloader()
     if args.train:
         print("Starting training...")
-        model = pipeline.build_model(num_classes=17)
+        model = pipeline.build_model(num_classes=17, is_train=args.train)
         pipeline.train(train_dataloader, test_dataloader, model, log=wandb_run)
     else:
         print("Starting prediction...")
-        model = pipeline.build_model(num_classes=17 + 2)
+        model = pipeline.build_model(num_classes=17 + 2, is_train=args.train)
         pipeline.predict(test_dataloader, model, log=wandb_run, use_pretrained=True)
     
     

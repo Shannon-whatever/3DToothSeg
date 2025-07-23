@@ -106,7 +106,7 @@ class PSPNet(nn.Module):
 
 
 if __name__ == '__main__':
-    input = torch.rand(4, 3, 465, 465).cuda() # 473 for 101; 465 for 50  assert size % 8 == 0
+    input = torch.rand(4, 3, 1025, 1025).cuda() # 473 for 101; 465 for 50  assert (size-1) % 8 == 0
     # zoom factor for final prediction during training, be in [1, 2, 4, 8]
     model = PSPNet(layers=50, classes=17, zoom_factor=8, use_ppm=True, pretrained=True).cuda()
     pretrained_model = torch.load('.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth')
@@ -123,3 +123,4 @@ if __name__ == '__main__':
     # print(model)
     output = model(input)  # (4, 17, 465, 465)
     print('PSPNet', output.size())
+    pass

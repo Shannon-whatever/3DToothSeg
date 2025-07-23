@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyrender
 import trimesh
+import json
+
+
 from utils.other_utils import color2label
 
 
@@ -33,7 +36,6 @@ def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
     os.makedirs(os.path.join(save_path, 'mask'), exist_ok=True)
 
     label_trimesh = trimesh.load(model_path)
-    # fuze_trimesh = trimesh.load(model_path)
     vertices = np.asarray(label_trimesh.vertices)
     minCoord = np.min(vertices, axis=0)
     maxCoord = np.max(vertices, axis=0)
@@ -165,9 +167,31 @@ def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
                                    viewport_height=rend_size[0],
                                    point_size=1.0)
 
-    angle_info = ""
+    camera_params = []
     for i, camera_pos in enumerate(camera_pos_list):
-        angle_info += f'theta {camera_pos[1]} beta {camera_pos[2]}\n'
+
+        # 获取相机参数
+        Rt = np.eye(4)
+        Rt[:3, :3] = camera_pos[0][:3, :3].T
+        Rt[:3, 3] = -np.dot(camera_pos[0][:3, :3].T, camera_pos[0][:3, 3])
+        # 焦距f
+        f_y = (rend_size[0] / 2) / math.tan(np.pi / 2 / 2)
+        f_x = f_y * 1.0
+        # 光心c
+        cx, cy = rend_size[1] / 2.0, rend_size[0] / 2.0
+        K = np.array(
+            [[f_x, 0, cx],
+                [0, f_y, cy],
+                [0, 0, 1]]
+        )
+        param_dict = {
+            "frame": i,
+            "theta": float(camera_pos[1]),
+            "beta": float(camera_pos[2]),
+            "Rt": Rt.tolist(),
+            "K": K.tolist()
+        }
+        camera_params.append(param_dict)
 
         # 渲染图片
         camera_node = scene.add(camera, pose=camera_pos[0])
@@ -182,9 +206,9 @@ def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
         plt.imsave(os.path.join(save_path, 'mask', f'{base_name}_{i}.png'), color)
 
 
-    with open(os.path.join(os.path.join(save_path, f'{base_name}_render_view.txt')), 'w',
-              encoding='ascii') as f:
-        f.write(angle_info)
+    # 保存相机信息
+    with open(os.path.join(os.path.join(save_path, f'{base_name}_view.json')), 'w') as f:
+        json.dump(camera_params, f, indent=4)
 
     r.delete()
 

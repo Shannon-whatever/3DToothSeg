@@ -31,15 +31,16 @@ class ToTensor(object):
             raise (RuntimeError("segtransform.ToTensor() only handle np.ndarray with 3 dims or 2 dims.\n"))
         if len(image.shape) == 2:
             image = np.expand_dims(image, axis=2)
-        if not len(label.shape) == 2:
-            raise (RuntimeError("segtransform.ToTensor() only handle np.ndarray labellabel with 2 dims.\n"))
+        # if not len(label.shape) == 2:
+        #     raise (RuntimeError("segtransform.ToTensor() only handle np.ndarray labellabel with 2 dims.\n"))
 
-        image = torch.from_numpy(image.transpose((2, 0, 1)))
-        if not isinstance(image, torch.FloatTensor):
-            image = image.float()
-        label = torch.from_numpy(label)
-        if not isinstance(label, torch.LongTensor):
-            label = label.long()
+        image = torch.from_numpy(image.transpose((2, 0, 1))).float()
+        label = torch.from_numpy(label.transpose((2, 0, 1))).float()
+        # if not isinstance(image, torch.FloatTensor):
+        #     image = image.float()
+        # label = torch.from_numpy(label)
+        # if not isinstance(label, torch.LongTensor):
+        #     label = label.long()
         return image, label
 
 
@@ -66,7 +67,7 @@ class Normalize(object):
 class Resize(object):
     # Resize the input to the given size, 'size' is a 2-element tuple or list in the order of (h, w).
     def __init__(self, size):
-        assert (isinstance(size, collections.Iterable) and len(size) == 2)
+        assert (isinstance(size, collections.abc.Iterable) and len(size) == 2)
         self.size = size
 
     def __call__(self, image, label):
@@ -78,8 +79,8 @@ class Resize(object):
 class RandScale(object):
     # Randomly resize image & label with scale factor in [scale_min, scale_max]
     def __init__(self, scale, aspect_ratio=None):
-        assert (isinstance(scale, collections.Iterable) and len(scale) == 2)
-        if isinstance(scale, collections.Iterable) and len(scale) == 2 \
+        assert (isinstance(scale, collections.abc.Iterable) and len(scale) == 2)
+        if isinstance(scale, collections.abc.Iterable) and len(scale) == 2 \
                 and isinstance(scale[0], numbers.Number) and isinstance(scale[1], numbers.Number) \
                 and 0 < scale[0] < scale[1]:
             self.scale = scale
@@ -87,7 +88,7 @@ class RandScale(object):
             raise (RuntimeError("segtransform.RandScale() scale param error.\n"))
         if aspect_ratio is None:
             self.aspect_ratio = aspect_ratio
-        elif isinstance(aspect_ratio, collections.Iterable) and len(aspect_ratio) == 2 \
+        elif isinstance(aspect_ratio, collections.abc.Iterable) and len(aspect_ratio) == 2 \
                 and isinstance(aspect_ratio[0], numbers.Number) and isinstance(aspect_ratio[1], numbers.Number) \
                 and 0 < aspect_ratio[0] < aspect_ratio[1]:
             self.aspect_ratio = aspect_ratio
@@ -117,7 +118,7 @@ class Crop(object):
         if isinstance(size, int):
             self.crop_h = size
             self.crop_w = size
-        elif isinstance(size, collections.Iterable) and len(size) == 2 \
+        elif isinstance(size, collections.abc.Iterable) and len(size) == 2 \
                 and isinstance(size[0], int) and isinstance(size[1], int) \
                 and size[0] > 0 and size[1] > 0:
             self.crop_h = size[0]
@@ -145,7 +146,7 @@ class Crop(object):
             raise (RuntimeError("ignore_label should be an integer number\n"))
 
     def __call__(self, image, label):
-        h, w = label.shape
+        h, w, _ = label.shape
         pad_h = max(self.crop_h - h, 0)
         pad_w = max(self.crop_w - w, 0)
         pad_h_half = int(pad_h / 2)
@@ -155,7 +156,7 @@ class Crop(object):
                 raise (RuntimeError("segtransform.Crop() need padding while padding argument is None\n"))
             image = cv2.copyMakeBorder(image, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=self.padding)
             label = cv2.copyMakeBorder(label, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=self.ignore_label)
-        h, w = label.shape
+        h, w, _ = label.shape
         if self.crop_type == 'rand':
             h_off = random.randint(0, h - self.crop_h)
             w_off = random.randint(0, w - self.crop_w)
@@ -170,7 +171,7 @@ class Crop(object):
 class RandRotate(object):
     # Randomly rotate image & label with rotate factor in [rotate_min, rotate_max]
     def __init__(self, rotate, padding, ignore_label=255, p=0.5):
-        assert (isinstance(rotate, collections.Iterable) and len(rotate) == 2)
+        assert (isinstance(rotate, collections.abc.Iterable) and len(rotate) == 2)
         if isinstance(rotate[0], numbers.Number) and isinstance(rotate[1], numbers.Number) and rotate[0] < rotate[1]:
             self.rotate = rotate
         else:
@@ -188,7 +189,7 @@ class RandRotate(object):
     def __call__(self, image, label):
         if random.random() < self.p:
             angle = self.rotate[0] + (self.rotate[1] - self.rotate[0]) * random.random()
-            h, w = label.shape
+            h, w, _ = label.shape
             matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1)
             image = cv2.warpAffine(image, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=self.padding)
             label = cv2.warpAffine(label, matrix, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=self.ignore_label)

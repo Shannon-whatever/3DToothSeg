@@ -27,7 +27,9 @@ class PPM(nn.Module):
 
 
 class PSPNet(nn.Module):
-    def __init__(self, layers=50, bins=(1, 2, 3, 6), dropout=0.1, classes=2, zoom_factor=8, use_ppm=True, criterion=nn.CrossEntropyLoss(ignore_index=255), pretrained=True):
+    def __init__(self, layers=50, bins=(1, 2, 3, 6), dropout=0.1, 
+                 classes=2, zoom_factor=8, use_ppm=True, criterion=nn.CrossEntropyLoss(ignore_index=255), 
+                 pretrained=True, output_intermediate=False):
         super(PSPNet, self).__init__()
         assert layers in [50, 101, 152]
         assert 2048 % len(bins) == 0
@@ -36,6 +38,7 @@ class PSPNet(nn.Module):
         self.zoom_factor = zoom_factor
         self.use_ppm = use_ppm
         self.criterion = criterion
+        self.output_intermediate = output_intermediate
 
         if layers == 50:
             resnet = models.resnet50(pretrained=pretrained)
@@ -90,6 +93,13 @@ class PSPNet(nn.Module):
         x = self.layer4(x_tmp)
         if self.use_ppm:
             x = self.ppm(x)
+        if self.output_intermediate:
+            if self.zoom_factor != 1:
+                out_feature = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
+            else:
+                out_feature = x
+        else:
+            out_feature = None
         x = self.cls(x)
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
@@ -98,11 +108,12 @@ class PSPNet(nn.Module):
             aux = self.aux(x_tmp)
             if self.zoom_factor != 1:
                 aux = F.interpolate(aux, size=(h, w), mode='bilinear', align_corners=True)
-            main_loss = self.criterion(x, y)
-            aux_loss = self.criterion(aux, y)
-            return x.max(1)[1], main_loss, aux_loss
+            # main_loss = self.criterion(x, y)
+            # aux_loss = self.criterion(aux, y)
+            # return x.max(1)[1], main_loss, aux_loss, out_feature
+            return x, aux, out_feature
         else:
-            return x
+            return x, out_feature
 
 
 if __name__ == '__main__':
