@@ -307,7 +307,7 @@ class PointTransformerSeg(nn.Module):
         batch_size = data.shape[0]
         point_size = data.shape[2]
         device = data.device
-        # data = data.permute(0, 2, 1).contiguous() # data shape should be (B, N_pc, C)
+        data = data.permute(0, 2, 1).contiguous() # data shape should be (B, N_pc, C)
 
         if self.enable_pic_feat:
             # point_to_pixel_feat = point_to_pixel_feat.permute(0, 2, 1).contiguous()

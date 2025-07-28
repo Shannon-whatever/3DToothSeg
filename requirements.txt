@@ -24,6 +24,8 @@ scipy
 plyfile 
 termcolor
 pyfqmr
+opencv-python
+torchmetrics
 
 
 # flash-attn==2.5.9.post1

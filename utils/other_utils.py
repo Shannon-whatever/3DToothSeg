@@ -46,14 +46,14 @@ color2label = {
 }
 
 label2color_lower = {
-    1: ("f00000", "LL1", (240, 0, 0)),
-    2: ("fbff03", "LL2", (251, 255, 3)),
-    3: ("2cfbff", "LL3", (44, 251, 255)),
-    4: ("f12fff", "LL4", (241, 47, 255)),
-    5: ("7dff9b", "LL5", (125, 255, 155)),
-    6: ("1a7dff", "LL6", (26, 125, 255)),
-    7: ("ffea9d", "LL7", (255, 234, 157)),
-    8: ("cc7e7e", "LL8", (204, 126, 126)),
+    1: ("f00000", "LL1", (240, 0, 0)), # -> 8
+    2: ("fbff03", "LL2", (251, 255, 3)), # -> 7
+    3: ("2cfbff", "LL3", (44, 251, 255)), # -> 6
+    4: ("f12fff", "LL4", (241, 47, 255)), # -> 5
+    5: ("7dff9b", "LL5", (125, 255, 155)), # -> 4
+    6: ("1a7dff", "LL6", (26, 125, 255)), # -> 3
+    7: ("ffea9d", "LL7", (255, 234, 157)), # -> 2
+    8: ("cc7e7e", "LL8", (204, 126, 126)), # -> 1
 
     9: ("ce81d4", "LR1", (206, 129, 212)),
     10: ("2d8742", "LR2", (45, 135, 66)),
@@ -325,7 +325,7 @@ def face_labels_to_vertex_labels(faces, face_labels, num_vertices):
     return vertex_labels
 
 
-def rgb_mask_to_onehot(mask_tensor, num_classes=17):
+def rgb_mask_to_label(mask_tensor, num_classes=17):
     """
     将 RGB mask 转换为 one-hot 编码 label tensor。
     
@@ -335,10 +335,10 @@ def rgb_mask_to_onehot(mask_tensor, num_classes=17):
         num_classes: int, 类别总数
 
     返回:
-        onehot_mask: torch.Tensor, shape=(num_classes, H, W)
+        label_map: torch.Tensor, shape=(H, W), dtype=torch.long
     """
     H, W = mask_tensor.shape[1], mask_tensor.shape[2]
-    label_map = torch.full((H, W), fill_value=num_classes) # 17 is background
+    label_map = torch.full((H, W), fill_value=num_classes, dtype=torch.long) # 17 is background
 
     # 转换成 (H, W, 3)
     mask_np = mask_tensor.permute(1, 2, 0).cpu().numpy()
@@ -353,7 +353,7 @@ def rgb_mask_to_onehot(mask_tensor, num_classes=17):
     # if (label_map == -1).any():
     #     print("Warning: some pixels do not match any color in color2label")
 
-    # 转 one-hot
-    one_hot = torch.nn.functional.one_hot(label_map.clamp(min=0), num_classes=num_classes+1)  # (H, W, C)
-    one_hot = one_hot.permute(2, 0, 1)  # (C, H, W)
-    return one_hot.long()
+    # # 转 one-hot
+    # one_hot = torch.nn.functional.one_hot(label_map.clamp(min=0), num_classes=num_classes+1)  # (H, W, C)
+    # one_hot = one_hot.permute(2, 0, 1)  # (C, H, W)
+    return label_map

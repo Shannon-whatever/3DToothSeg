@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import glob
 import torch
 import argparse
@@ -6,18 +7,39 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import wandb
+from einops import rearrange
 
-# from models.PTv1.point_transformer_seg import PointTransformerSeg38
 from loss.cbl import CBLLoss
 from models.main_network import ToothSegNet
 from dataset.teeth3ds import Teeth3DSDataset
-from utils.other_utils import output_pred_ply, label2color_lower
+from utils.other_utils import output_pred_ply, label2color_lower, label2color_upper
+from utils.metric_utils import calculate_miou
 
 
 class ToothSegmentationPipeline:
     def __init__(self, args):
         self.args = args
         self.device = self.args.device
+
+        self.best_miou = 0.0
+        self.best_epoch = 0
+
+        self.get_dataloader()
+
+        if args.train:
+            self.build_model(num_classes=17, is_train=args.train)
+        else:
+            self.build_model(num_classes=17 + 2, is_train=args.train)
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.lr)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.args.epochs, eta_min=1e-6)
+        self.criterion_ce = torch.nn.CrossEntropyLoss()
+        self.criterion_cbl = CBLLoss().to(self.device)
+
+        if args.use_wandb:
+            self.logger = wandb.init(entity='3dtooth_seg',project='3dtooth_seg', name=args.save_dir, dir=args.save_dir, config=vars(args))
+        else:
+            self.logger = None
 
     def get_dataloader(self):
         upper_files = glob.glob(os.path.join(self.args.data_dir, 'upper', '*.ply'))
@@ -38,35 +60,27 @@ class ToothSegmentationPipeline:
 
         print(f"Dataset size: Train: {len(train_dataset)}, Test: {len(test_dataset)}")
 
-        train_dataloader = DataLoader(
+        self.train_dataloader = DataLoader(
             train_dataset, batch_size=self.args.batch_size, shuffle=True,
             num_workers=self.args.num_workers, pin_memory=True, collate_fn=self.custom_collate_fn
         )
 
-        test_dataloader = DataLoader(
+        self.test_dataloader = DataLoader(
             train_dataset, batch_size=self.args.batch_size, shuffle=True,
             num_workers=self.args.num_workers, pin_memory=True, collate_fn=self.custom_collate_fn
         )
-        return train_dataloader, test_dataloader
 
 
     def build_model(self, num_classes, is_train=False):
-        model = ToothSegNet(
+        self.model = ToothSegNet(
             in_channels=6, num_classes=num_classes, is_train=is_train).to(self.device)
-        return model
 
-    def train(self, train_dataloader, test_dataloader, model, log=None):
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.args.lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.args.epochs, eta_min=1e-6)
-        loss_ce = torch.nn.CrossEntropyLoss()
-        loss_cbl = CBLLoss().to(self.device)
+    def train(self):
         
-
-        model.train()
+        self.model.train()
         for epoch in range(self.args.epochs):
             total_loss = 0.0
-            loop = tqdm(train_dataloader, desc=f"Epoch [{epoch+1}/{self.args.epochs}]", leave=False)
+            loop = tqdm(self.train_dataloader, desc=f"Epoch [{epoch+1}/{self.args.epochs}]", leave=False)
 
             for batch_idx, batch_data in enumerate(loop):
                 pointcloud = batch_data['pointclouds'].to(self.device)
@@ -76,54 +90,65 @@ class ToothSegmentationPipeline:
                 cameras_Rt = batch_data['cameras_Rt'].to(self.device)
                 cameras_K = batch_data['cameras_K'].to(self.device)
 
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
 
-                predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux = model(pointcloud, renders, cameras_Rt, cameras_K)
-                loss_3d = loss_ce(predict_pc_labels, labels)
-                loss_2d = loss_ce(predict_2d_masks, masks) + loss_ce(predict_2d_aux, masks)
-                loss_cbl = loss_cbl(cbl_loss_aux, labels)
+                predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux = self.model(pointcloud, renders, cameras_Rt, cameras_K)
+                
+                # calculate losses
+                loss_3d = self.criterion_ce(predict_pc_labels, labels)
+
+                masks = rearrange(masks, 'b nv h w -> (b nv) h w') # (B, N_v, H, W) -> (B*N_v, H, W)
+                loss_2d = self.criterion_ce(predict_2d_masks, masks) + self.criterion_ce(predict_2d_aux, masks)
+
+                loss_cbl = self.criterion_cbl(cbl_loss_aux, labels.view(-1))
                 loss = loss_2d + loss_3d + loss_cbl
 
+
                 loss.backward()
-                optimizer.step()
+                self.optimizer.step()
                 total_loss += loss.item()
 
                 loop.set_postfix(loss=loss.item())
 
-                if log:
-                    wandb_run.log({"batch_loss": loss.item(), "step": epoch * len(train_dataloader) + batch_idx})
+                if self.logger:
+                    self.logger.log({
+                        "batch_loss": loss.item(),
+                        "loss_3d": loss_3d.item(),
+                        "loss_2d": loss_2d.item(),
+                        "loss_cbl": loss_cbl.item(),
+                        "step": epoch * len(self.train_dataloader) + batch_idx
+                    })
 
-            avg_loss = total_loss / len(train_dataloader)
+            avg_loss = total_loss / len(self.train_dataloader)
             tqdm.write(f"Epoch [{epoch+1}/{self.args.epochs}] - Average Loss: {avg_loss:.4f}")
-            scheduler.step()
+            self.scheduler.step()
 
-            if log:
-                log.log({"epoch": epoch + 1, "epoch_loss": avg_loss, "lr": optimizer.param_groups[0]['lr']})
+            if self.logger:
+                self.logger.log({"epoch": epoch + 1, "epoch_loss": avg_loss, "lr": self.optimizer.param_groups[0]['lr']})
 
 
             if (epoch + 1) % self.args.eval_epoch_step == 0 or (epoch + 1) == self.args.epochs:
 
-                self.predict(test_dataloader, model, epoch, log=log)
+                self.predict(epoch)
 
-                save_path = os.path.join(self.args.save_dir, f"point_transformer_epoch{epoch+1}.pth")
-                torch.save(model.state_dict(), save_path)
-                print(f"Saved model checkpoint to {save_path}")
+    def predict(self, current_epoch=None):
 
-    def predict(self, dataloader, model, current_epoch=None, log=None, use_pretrained='models/PTv1/point_best_model.pth'):
- 
-        if use_pretrained is not None:
-            pretrained_dict = torch.load(use_pretrained)
-            print(f"Loading pretrained model from {use_pretrained}")
-            model.load_state_dict(pretrained_dict)
 
-        model.eval()
+        self.model.eval()
 
         lower_palette = np.array(
-            [[125, 125, 125]] +
-            [[label2color_lower[label][2][0],
-              label2color_lower[label][2][1],
-              label2color_lower[label][2][2]]
-             for label in range(1, 17)], dtype=np.uint8)
+        [[label2color_lower[label][2][0],
+          label2color_lower[label][2][1],
+          label2color_lower[label][2][2]]
+         for label in range(0, 17)], dtype=np.uint8) # (17, 3)
+        
+        upper_palette = np.array(
+        [[label2color_upper[label][2][0],
+          label2color_upper[label][2][1],
+          label2color_upper[label][2][2]]
+         for label in range(0, 17)], dtype=np.uint8)
+        
+        miou_list = []
 
         # case by case evaluation
         # pointcloud, point_coords, face_info = dataloader.dataset.get_by_name(self.args.case)
@@ -133,29 +158,72 @@ class ToothSegmentationPipeline:
         # pointcloud = pointcloud.permute(0, 2, 1).contiguous()
 
         with torch.no_grad():
-            for pointcloud, labels, point_coords, face_info, renders, masks, file_name in dataloader:
-                pointcloud = pointcloud.to(self.device).permute(0, 2, 1).contiguous()
-                point_seg_result, _ = model(pointcloud)
-                pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
-                _, pred_classes = torch.max(pred_softmax, dim=1)
+            loop_val = tqdm(self.test_dataloader, desc=f"Validating", leave=False)
+            for batch_idx, batch_data in enumerate(loop_val):
+                pointcloud = batch_data['pointclouds']
+                point_coords = batch_data['point_coords']
+                face_info = batch_data['face_infos']
+                file_name = batch_data['file_names']
+                labels = batch_data['labels']
 
-                if use_pretrained or (current_epoch is not None and (current_epoch + 1) == self.args.epochs):
-                    pred_mask = pred_classes.squeeze(0).cpu().numpy().astype(np.uint8)
-                    pred_mask[pred_mask == 17] = 0
-                    pred_mask[pred_mask == 18] = 0
-                    pred_mask = lower_palette[pred_mask]
+                pointcloud = pointcloud.to(self.device)
+                point_seg_result = self.model(pointcloud) # (B, num_classes, N_pc)
+                # pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
+                # _, pred_classes = torch.max(pred_softmax, dim=1) # (B, N_pc)
+
+                # calculate miou
+                pred_classes = point_seg_result.argmax(dim=1)  # (B, N_pc)
+                pred_classes[pred_classes == 17] = 0
+                pred_classes[pred_classes == 18] = 0
+                
+                batch_size = pred_classes.shape[0]
+                for i in range(batch_size):
+                    sample_pred = pred_classes[i].cpu().numpy()  
+                    sample_label = labels[i].cpu().numpy() 
+                    miou, _ = calculate_miou(
+                        sample_pred, sample_label, n_class=17)
+                    miou_list.append(miou)
+
+                if current_epoch is not None and (current_epoch + 1) == self.args.epochs:
+                    pred_classes = pred_classes.cpu().numpy().astype(np.uint8)
 
                     bs = len(point_coords)
                     for i in range(bs):
                         file_name_i = file_name[i]
                         if 'upper' in file_name_i:
                             save_path = os.path.join(self.args.save_predict_mask_dir, 'upper', file_name_i.replace('process', 'predict'))
+                            pred_mask = upper_palette[pred_classes[i]]
                         elif 'lower' in file_name_i:
                             save_path = os.path.join(self.args.save_predict_mask_dir, 'lower', file_name_i.replace('process', 'predict'))
-                        output_pred_ply(pred_mask[i], None, save_path, point_coords[i], face_info[i])
+                            pred_mask = lower_palette[pred_classes[i]]
+                        output_pred_ply(pred_mask, None, save_path, point_coords[i], face_info[i])
 
 
                     print(f"Predict end, result saved at {self.args.save_predict_mask_dir}")
+            
+
+            miou_value = torch.stack(miou_list)
+            miou_value = miou_value.mean().item()
+
+            if self.logger:
+                self.logger.log({"val_miou": miou_value})
+
+            if miou_value > self.best_miou:
+                self.best_miou = miou_value
+                self.best_epoch = current_epoch + 1 if current_epoch is not None else 'N/A'
+                print(f"New best mIoU: {self.best_miou:.4f} at epoch {self.best_epoch}")
+            
+            if current_epoch is not None:
+                if miou_value > self.best_miou or (current_epoch + 1) == self.args.epochs:
+                    save_path = os.path.join(self.args.save_dir, f"toothseg_epoch{current_epoch+1}_miou{miou_value:.3f}.pth")
+                    torch.save({
+                        'epoch': current_epoch + 1,
+                        'model_state_dict': self.model.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                    }, save_path)
+                    print(f"Saved model checkpoint to {save_path}")
+
+            tqdm.write(f"Epoch [{current_epoch}/{self.args.epochs}] - mIoU: {miou_value:.3f}")
 
     def custom_collate_fn(self, batch):
         pointclouds = []
@@ -194,7 +262,7 @@ class ToothSegmentationPipeline:
         pointclouds = torch.stack(pointclouds)  # (B, num_points, 6)
         labels = torch.stack(labels)            # (B, num_points)
         renders = torch.stack(renders)          # (B, num_views, 3, H, W)
-        masks = torch.stack(masks)              # (B, num_views, 3, H, W)
+        masks = torch.stack(masks)              # (B, num_views, H, W)
         cameras_Rt = torch.stack(cameras_Rt)    # (B, num_views, 4, 4)
         cameras_K = torch.stack(cameras_K)      # (B, num_views, 3, 3)
 
@@ -219,9 +287,9 @@ def get_args():
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--save_dir', type=str, default='exp')
-    parser.add_argument('--save_predict_mask_dir', type=str, default='.datasets/teeth3ds/sample/predict')
-    parser.add_argument('--eval_epoch_step', type=int, default=20)
+    parser.add_argument('--save_dir', type=str, default='exp/sample_test')
+    # parser.add_argument('--save_predict_mask_dir', type=str, default='.datasets/teeth3ds/sample/predict')
+    parser.add_argument('--eval_epoch_step', type=int, default=1)
     parser.add_argument('--device', type=str, default='cuda:0' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--train_test_split', type=int, choices=[0, 1, 2], default=0)
@@ -233,25 +301,20 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
     os.makedirs(args.save_dir, exist_ok=True)
+    args.save_predict_mask_dir = os.path.join(args.save_dir, 'predict_masks')
     os.makedirs(os.path.join(args.save_predict_mask_dir, 'upper'), exist_ok=True)
     os.makedirs(os.path.join(args.save_predict_mask_dir, 'lower'), exist_ok=True)
     
-    if args.use_wandb:
-        wandb_run = wandb.init(project='3dtooth_seg', name='3dtooth_seg', config=vars(args))
-    else:
-        wandb_run = None
+    
 
     pipeline = ToothSegmentationPipeline(args)
     
-    train_dataloader, test_dataloader = pipeline.get_dataloader()
     if args.train:
         print("Starting training...")
-        model = pipeline.build_model(num_classes=17, is_train=args.train)
-        pipeline.train(train_dataloader, test_dataloader, model, log=wandb_run)
+        pipeline.train()
     else:
         print("Starting prediction...")
-        model = pipeline.build_model(num_classes=17 + 2, is_train=args.train)
-        pipeline.predict(test_dataloader, model, log=wandb_run, use_pretrained=True)
+        pipeline.predict()
     
     
     

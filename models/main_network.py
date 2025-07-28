@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
 
 from models.PTv1.point_transformer_seg import PointTransformerSeg38
 from models.Seg2d.pspnet import PSPNet
@@ -17,10 +18,15 @@ class ToothSegNet(nn.Module):
         self.is_train = is_train
         if is_train:
             use_pretrain_3d = None
-        self.seg_model_3d = PointTransformerSeg38(
-            in_channels=in_channels, num_classes=num_classes,
-            pretrain=False, add_cbl=True, enable_pic_feat=True
-        )
+            self.seg_model_3d = PointTransformerSeg38(
+                in_channels=in_channels, num_classes=num_classes,
+                pretrain=False, add_cbl=True, enable_pic_feat=True
+            )
+        else:
+            self.seg_model_3d = PointTransformerSeg38(
+                in_channels=in_channels, num_classes=num_classes,
+                pretrain=False, add_cbl=False, enable_pic_feat=False
+            )
 
         self.seg_model_2d = PSPNet(layers=50, classes=num_classes+1, zoom_factor=8, use_ppm=True, pretrained=True, output_intermediate=False)
 
@@ -60,19 +66,12 @@ class ToothSegNet(nn.Module):
         ones = torch.ones((B, N_pc, 1), device=points.device, dtype=points.dtype)
         points_homo = torch.cat([points, ones], dim=-1)  # (B, N_pc, 4)
 
-        # 2. 扩展维度对齐视角：-> (B, N_v, N_pc, 4)
-        points_homo = points_homo[:, None, :, :]  # (B, 1, N_pc, 4)
-        points_homo = points_homo.expand(-1, N_v, -1, -1)
+        # 2. 外参变换：points_cam = Rt @ points_homo
+        Rt = cameras_Rt[:, :, :3, :]
+        point_cam = torch.einsum('bvrc,bnc->bvnr', Rt, points_homo)  # (B, N_v, 3, 4) * (B, N_pc, 4) -> (B, N_v, N_pc, 3)
 
-        # 3. 相机变换（外参）：(B, N_v, 3, 4) x (B, N_v, N_pc, 4)^T
-        Rt = cameras_Rt[:, :, :3, :]  # (B, N_v, 3, 4)
-        point_cam = torch.matmul(Rt, points_homo.unsqueeze(-1))  # (B, N_v, N_pc, 3, 1)
-        point_cam = point_cam.squeeze(-1)  # (B, N_v, N_pc, 3)
-
-        # 4. 相机内参投影：K @ point_cam
-        K = cameras_K  # (B, N_v, 3, 3)
-        point_img = torch.matmul(K, point_cam.unsqueeze(-1))  # (B, N_v, N_pc, 3, 1)
-        point_img = point_img.squeeze(-1)  # (B, N_v, N_pc, 3)
+        # 3. 内参投影：K @ points_cam
+        point_img = torch.einsum('bvrc,bvnc->bvnr', cameras_K, point_cam)  # (B, N_v, 3, 3) * (B, N_v, N_pc, 3) -> (B, N_v, N_pc, 3)
 
         # 5. 归一化：除以z
         img_x = point_img[..., 0] / (point_img[..., 2] + 1e-6) # x is w
@@ -83,12 +82,12 @@ class ToothSegNet(nn.Module):
 
         if normalize:
             # 归一化到 [-1， 1]
-            img_points[..., 0] = (img_points[..., 0] / (render_size[1] - 1)) * 2 - 1
-            img_points[..., 1] = (img_points[..., 1] / (render_size[0] - 1)) * 2 - 1
+            img_points[..., 0] = (img_points[..., 0] / (render_size[0] - 1)) * 2 - 1
+            img_points[..., 1] = (img_points[..., 1] / (render_size[1] - 1)) * 2 - 1
 
         return img_points
 
-    def sample_point_features_from_2d(img_points, feature_2d):
+    def sample_point_features_from_2d(self, img_points, feature_2d):
         """
         使用 grid_sample 根据图像坐标提取点的 2D 特征，并进行视角平均。
         
@@ -128,11 +127,11 @@ class ToothSegNet(nn.Module):
 
         return point_features
 
-    def get_pixel_labels_from_gt(pixel_coords, masks, default_label=0):
+    def get_pixel_labels_from_gt(self, pixel_coords, masks, default_label=0):
         """
         Args:
             pixel_coords: (B, N_v, N_pc, 2), 取值范围在 [0, H-1], [0, W-1]
-            masks: (B, N_v, 17+1, H, W)  # mask: prob for each class
+            masks: (B, N_v, 3, H, W)  # mask: mask rgb
             color2label: dict of {(r,g,b): label_idx}
             default_label: 默认标签
         Returns:
@@ -149,7 +148,6 @@ class ToothSegNet(nn.Module):
         # 准备展开索引
         batch_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, N_v, N_pc)
         view_idx = torch.arange(N_v, device=device).view(1, N_v, 1).expand(B, N_v, N_pc)
-        pc_idx = torch.arange(N_pc, device=device).view(1, 1, N_pc).expand(B, N_v, N_pc)
         h_idx = pixel_coords[..., 0]
         w_idx = pixel_coords[..., 1]
 
@@ -180,30 +178,71 @@ class ToothSegNet(nn.Module):
 
         return mode_labels.unsqueeze(-1)  # (B, N_pc, 1)
 
+    def get_pixel_labels(self, pixel_coords, masks, default_label=0):
+        """
+        Args:
+            pixel_coords: (B, N_v, N_pc, 2), 取值范围在 [0, H-1], [0, W-1]
+            masks: (B, N_v, 17+1, H, W)  # mask: prob for each class
+            default_label: 默认标签为牙龈
+        Returns:
+            labels: (B, N_pc, 1)
+        """
+        B, N_v, N_pc, _ = pixel_coords.shape
+        masks = masks.view(B, N_v, -1, masks.shape[-2], masks.shape[-1])  # (B, N_v, C, H, W)
+        _, _, _, H, W = masks.shape
 
-    def forward(self, pointcloud, renders, cameras_Rt, cameras_K):
+        device = pixel_coords.device
+        pixel_coords = pixel_coords.long()
+        pixel_coords[..., 0] = pixel_coords[..., 0].clamp(0, H - 1)
+        pixel_coords[..., 1] = pixel_coords[..., 1].clamp(0, W - 1)
 
+        # 准备展开索引
+        batch_idx = torch.arange(B, device=device).view(B, 1, 1).expand(B, N_v, N_pc)
+        view_idx = torch.arange(N_v, device=device).view(1, N_v, 1).expand(B, N_v, N_pc)
+        h_idx = pixel_coords[..., 0]
+        w_idx = pixel_coords[..., 1]
+
+        # 获取每个点的类别 logits 或 prob: (B, N_v, N_pc, C)
+        logits = masks.permute(0, 1, 3, 4, 2)[batch_idx, view_idx, h_idx, w_idx]  # (B, N_v, N_pc, C)
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        avg_probs = probs.mean(dim=1)  # (B, N_pc, C)
         
-        renders = renders.reshape(-1, renders.shape[2], renders.shape[3], renders.shape[4]) # (B, N_v, C, H, W) -> (B*N_v, C, H, W)
-        render_size = renders.shape[-1]
+        with torch.no_grad():
+            labels_int = avg_probs.argmax(dim=-1)  # (B, N_pc)
+            labels_int = labels_int.masked_fill(labels_int == 17, default_label)
+
+        # 用 one-hot 形式乘以 class index 实现 “离散前向 + 连续反向”
+        one_hot = torch.nn.functional.one_hot(labels_int, num_classes=avg_probs.shape[-1]).float()
+        label_indices = torch.arange(avg_probs.shape[-1], device=avg_probs.device).view(1, 1, -1)  # (1, 1, C)
+        labels_final = (one_hot * label_indices).sum(dim=-1) + (avg_probs * label_indices).sum(dim=-1) - ((avg_probs * label_indices).sum(dim=-1)).detach()
+
+        return labels_final.unsqueeze(-1)  # (B, N_pc, 1)
+    
+
+    def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):
 
 
         if self.is_train:
+
+            renders = rearrange(renders, 'b nv c h w -> (b nv) c h w') # (B, N_v, 3, H, W) -> (B*N_v, 3, H, W)
+            render_size = renders.shape[-2:]
+
             # get 2d feature and 2d mask prediction
-            predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d(renders)
+            predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d(renders) # predict_2d_masks/predict_2d_aux: (B*N_v, 17+1, H, W), feature_2d: (B*N_v, C, H, W)
             # cameras_Rt (B, N_v, 4, 4), cameras_K (B, N_v, 3, 3)
             # 注意投影的时候点云坐标不能是标准化后的
-            projected_pc = self.project_points(cameras_Rt, cameras_K, pointcloud[:, :, :3], render_size)  # (B, N_v, N_pc, 2)
+            projected_pc = self.project_points(cameras_Rt, cameras_K, pointcloud[:, :, 6:], render_size)  # (B, N_v, N_pc, 2)
             # point_features_2d = self.sample_point_features_from_2d(projected_pc, feature_2d) # (B, N_pc, C)
             point_features_2d = self.get_pixel_labels(projected_pc, predict_2d_masks) # (B, N_pc, 1)
 
-            # 只取标准化后的点云坐标和法相
-            predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pointcloud[:, :, 3:], point_to_pixel_feat=point_features_2d)
+            # 只取标准化后的点云坐标和法向量
+            pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
+            predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
             return predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux
         
         else:
-            raise NotImplementedError("Inference mode is not implemented yet.")
             # predict_2d_masks = self.seg_model_2d(renders)
-            # predict_pc_labels, _ = self.seg_model_3d(pointcloud)
+            pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
+            predict_pc_labels, _ = self.seg_model_3d(pc)
 
-            # return predict_2d_masks, predict_pc_labels
+            return predict_pc_labels

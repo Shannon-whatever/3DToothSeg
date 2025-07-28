@@ -82,10 +82,10 @@ class DatasetPrepare():
                             output_pred_ply(mask, None, file_save_path, point_coords, face_info, vertex_mask)
 
                             # prepare render data
-                            render(file_save_path, file_save_dir, rend_size=self.render_size, rend_step=self.render_step)
+                            render(os.path.join(root, file), file_save_path, file_save_dir, rend_size=self.render_size, rend_step=self.render_step)
                             pbar.update(1)
 
 if __name__ == '__main__':
 
-    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds/sample', processed_folder='processed')
+    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds/sample', processed_folder='processed', render_step=(2, 2))
     dataset_prepare.prepare_gt_ply()

@@ -17,7 +17,7 @@ from dataset import data_util
 from dataset import image_util
 from utils.mesh_io import filter_files
 from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply, face_labels_to_vertex_labels
-from utils.other_utils import rgb_mask_to_label
+from utils.other_utils import rgb_mask_to_onehot
 
 
 
@@ -48,8 +48,6 @@ class Teeth3DSDataset(Dataset):
         if is_train:
             self.point_transform = transforms.Compose(
                 [
-                    data_util.PointcloudRandomRotate(angle_sigma=0.06, angle_clip=0.18),
-                    data_util.PointcloudRandomShift(shift_range=0.1),
                     data_util.PointcloudToTensor(),
                     data_util.PointcloudNormalize(radius=1),
                     data_util.PointcloudSample(total=num_points, sample=sample_points, permute=True)
@@ -291,12 +289,12 @@ class Teeth3DSDataset(Dataset):
 
 
             # label color to label id
-            label = rgb_mask_to_label(label)
+            label = rgb_mask_to_onehot(label)
             renders.append(image)
             masks.append(label)
         
         renders = torch.stack(renders, dim=0)  # (N_v, 3, H, W)
-        masks = torch.stack(masks, dim=0)  # (N_v, H, W)
+        masks = torch.stack(masks, dim=0)  # (N_v, 17+1, H, W)
 
         # cameras
         with open(os.path.join(file_path, f'{file_name}_view.json'), 'r') as f:
@@ -305,18 +303,18 @@ class Teeth3DSDataset(Dataset):
         cameras_rt = torch.stack([torch.tensor(cam["Rt"], dtype=torch.float32) for cam in camera_params])
         cameras_k = torch.stack([torch.tensor(cam["K"], dtype=torch.float32) for cam in camera_params])
 
-        return_dict = {
-            "pointcloud": pointcloud, # (N_pc, 9) face center coord norm + face normal + face center coord ori
-            "labels": labels, # (N_pc)
-            "point_coords": point_coords, # (N_vertices, 3) array
-            "face_info": face_info, # (N_pc, 6) array 
-            "renders": renders, # (N_v, 3, H, W)
-            "masks": masks, # (N_v, H, W)
-            "cameras_Rt": cameras_rt, # (N_v, 4, 4)
-            "cameras_K": cameras_k # (N_v, 3, 3)
-        }
+        # return_dict = {
+        #     "pointcloud": pointcloud, # (N_pc, 9) face center coord norm + face normal + face center coord ori
+        #     "labels": labels, # (N_pc)
+        #     "point_coords": point_coords, # (N_vertices, 3) array
+        #     "face_info": face_info, # (N_pc, 6) array 
+        #     "renders": renders,
+        #     "masks": masks,
+        #     "cameras_Rt": cameras_rt, # (N_v, 4, 4)
+        #     "cameras_K": cameras_k # (N_v, 3, 3)
+        # }
 
-        return return_dict
+        return pointcloud, labels
     
     def _load_in_memory(self):
         for f in tqdm(self.file_names, desc="Loading point clouds into memory"):
@@ -333,10 +331,11 @@ class Teeth3DSDataset(Dataset):
         
         else:
             f = self.file_names[index]
-            data_dict = self._get_data(f)
-            data_dict.update({"file_names": os.path.basename(f)})
+            # data_dict = self._get_data(f)
+            # data_dict.update({"file_names": os.path.basename(f)})
+            pointcloud, labels = self._get_data(f)
             
-        return data_dict
+        return pointcloud, labels
 
             
         

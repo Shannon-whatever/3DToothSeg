@@ -29,14 +29,14 @@ def m3dLookAt(eye, target, up):
     ])
 
 
-def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
+def render(model_path, label_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
     base_name = os.path.basename(model_path)[:-4]
 
     os.makedirs(os.path.join(save_path, 'render'), exist_ok=True)
     os.makedirs(os.path.join(save_path, 'mask'), exist_ok=True)
 
-    label_trimesh = trimesh.load(model_path)
-    vertices = np.asarray(label_trimesh.vertices)
+    fuze_trimesh = trimesh.load(model_path)
+    vertices = np.asarray(fuze_trimesh.vertices)
     minCoord = np.min(vertices, axis=0)
     maxCoord = np.max(vertices, axis=0)
     meanCoord = np.mean(vertices, axis=0)
@@ -68,7 +68,8 @@ def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
         theta += math.pi / rend_step[1]
 
     # 创建模型
-    pyrender_mesh = pyrender.Mesh.from_trimesh(label_trimesh)
+    pyrender_mesh = pyrender.Mesh.from_trimesh(fuze_trimesh)
+    label_trimesh = trimesh.load(label_path)
 
     # 创建场景
     scene = pyrender.Scene()
@@ -215,8 +216,9 @@ def render(model_path, save_path, rend_size=(256, 256), rend_step=(9, 12)):
 
 if __name__ == '__main__':
 
+    obj_path = 'tmp/YBSESUN6_upper.obj'
     ply_cell_color_path = 'tmp/YBSESUN6_upper_gt.ply'
     save_path = "tmp/YBSESUN6_upper_gt"
-    render(ply_cell_color_path, save_path, rend_size=(1024, 1024), rend_step=(6, 9))
+    render(obj_path, ply_cell_color_path, save_path, rend_size=(1024, 1024), rend_step=(6, 9))
 
 
