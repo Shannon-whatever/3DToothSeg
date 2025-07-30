@@ -12,7 +12,8 @@ from einops import rearrange
 from loss.cbl import CBLLoss
 from models.main_network import ToothSegNet
 from dataset.teeth3ds import Teeth3DSDataset
-from utils.other_utils import output_pred_ply, label2color_lower, label2color_upper
+from utils.other_utils import output_pred_ply, save_metrics_to_txt
+from utils.color_utils import label2color_lower, label2color_upper
 from utils.metric_utils import calculate_miou
 
 
@@ -49,12 +50,12 @@ class ToothSegmentationPipeline:
 
         train_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=False, train_test_split=self.args.train_test_split, is_train=True,
+            force_process=True, train_test_split=self.args.train_test_split, is_train=True,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
         test_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=False, train_test_split=self.args.train_test_split, is_train=False,
+            force_process=True, train_test_split=self.args.train_test_split, is_train=False,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
 
@@ -148,14 +149,10 @@ class ToothSegmentationPipeline:
           label2color_upper[label][2][2]]
          for label in range(0, 17)], dtype=np.uint8)
         
-        miou_list = []
+        miou = []
+        per_class_iou = []
+        merge_iou = []
 
-        # case by case evaluation
-        # pointcloud, point_coords, face_info = dataloader.dataset.get_by_name(self.args.case)
-        # pointcloud = pointcloud.unsqueeze(0).to(self.device)
-        # point_coords = point_coords[None, :]
-        # face_info = face_info[None, :]
-        # pointcloud = pointcloud.permute(0, 2, 1).contiguous()
 
         with torch.no_grad():
             loop_val = tqdm(self.test_dataloader, desc=f"Validating", leave=False)
@@ -167,6 +164,7 @@ class ToothSegmentationPipeline:
                 labels = batch_data['labels']
 
                 pointcloud = pointcloud.to(self.device)
+                labels = labels.to(self.device)
                 point_seg_result = self.model(pointcloud) # (B, num_classes, N_pc)
                 # pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
                 # _, pred_classes = torch.max(pred_softmax, dim=1) # (B, N_pc)
@@ -176,13 +174,11 @@ class ToothSegmentationPipeline:
                 pred_classes[pred_classes == 17] = 0
                 pred_classes[pred_classes == 18] = 0
                 
-                batch_size = pred_classes.shape[0]
-                for i in range(batch_size):
-                    sample_pred = pred_classes[i].cpu().numpy()  
-                    sample_label = labels[i].cpu().numpy() 
-                    miou, _ = calculate_miou(
-                        sample_pred, sample_label, n_class=17)
-                    miou_list.append(miou)
+                miou_batch, per_class_iou_batch, merge_iou_batch = calculate_miou(
+                    pred_classes, labels, n_class=17)
+                miou.append(miou_batch)
+                per_class_iou.append(per_class_iou_batch)
+                merge_iou.append(merge_iou_batch)
 
                 if current_epoch is not None and (current_epoch + 1) == self.args.epochs:
                     pred_classes = pred_classes.cpu().numpy().astype(np.uint8)
@@ -200,22 +196,29 @@ class ToothSegmentationPipeline:
 
 
                     print(f"Predict end, result saved at {self.args.save_predict_mask_dir}")
+                
+                loop_val.set_postfix(miou=miou_batch)
             
 
-            miou_value = torch.stack(miou_list)
-            miou_value = miou_value.mean().item()
+            miou = torch.stack(miou)
+            miou = miou.mean().item()
+
+            per_class_iou = torch.stack(per_class_iou).mean(dim=0) # (C, )
+            merge_iou = torch.stack(merge_iou).mean(dim=0) # (num_pairs, )
+
 
             if self.logger:
-                self.logger.log({"val_miou": miou_value})
+                self.logger.log({"val_miou": miou})
 
-            if miou_value > self.best_miou:
-                self.best_miou = miou_value
+            if miou > self.best_miou:
+                self.best_miou = miou
                 self.best_epoch = current_epoch + 1 if current_epoch is not None else 'N/A'
                 print(f"New best mIoU: {self.best_miou:.4f} at epoch {self.best_epoch}")
             
             if current_epoch is not None:
-                if miou_value > self.best_miou or (current_epoch + 1) == self.args.epochs:
-                    save_path = os.path.join(self.args.save_dir, f"toothseg_epoch{current_epoch+1}_miou{miou_value:.3f}.pth")
+                if miou > self.best_miou or (current_epoch + 1) == self.args.epochs:
+                    # save model
+                    save_path = os.path.join(self.args.save_dir, f"toothseg_epoch{current_epoch+1}_miou{miou:.3f}.pth")
                     torch.save({
                         'epoch': current_epoch + 1,
                         'model_state_dict': self.model.state_dict(),
@@ -223,7 +226,14 @@ class ToothSegmentationPipeline:
                     }, save_path)
                     print(f"Saved model checkpoint to {save_path}")
 
-            tqdm.write(f"Epoch [{current_epoch}/{self.args.epochs}] - mIoU: {miou_value:.3f}")
+                    # save metrics
+                    save_metrics_to_txt(
+                        filepath=os.path.join(self.args.save_dir, f"metrics_result_epoch{current_epoch+1}_miou{miou:.3f}.txt"),
+                        miou=miou,
+                        per_class_miou=per_class_iou.cpu().numpy(),
+                        merge_iou=merge_iou.cpu().numpy(),
+                        )
+
 
     def custom_collate_fn(self, batch):
         pointclouds = []
@@ -288,13 +298,11 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--save_dir', type=str, default='exp/sample_test')
-    # parser.add_argument('--save_predict_mask_dir', type=str, default='.datasets/teeth3ds/sample/predict')
     parser.add_argument('--eval_epoch_step', type=int, default=1)
     parser.add_argument('--device', type=str, default='cuda:0' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--train_test_split', type=int, choices=[0, 1, 2], default=0)
     parser.add_argument('--train', action='store_true', help='Run training')
-    parser.add_argument('--pretrain_model_path', type=str, default='models/PTv1/point_best_model.pth')
     parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases for logging')
     return parser.parse_args()
 
