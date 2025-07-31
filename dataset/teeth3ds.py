@@ -16,7 +16,8 @@ import torch
 from dataset import data_util
 from dataset import image_util
 from utils.mesh_io import filter_files
-from utils.other_utils import FDI2label, label2color_upper, label2color_lower, output_pred_ply, color2label, load_color_from_ply, face_labels_to_vertex_labels
+from utils.other_utils import output_pred_ply, load_color_from_ply, face_labels_to_vertex_labels
+from utils.color_utils import FDI2label, label2color_upper, label2color_lower
 from utils.other_utils import rgb_mask_to_label
 
 
@@ -104,7 +105,7 @@ class Teeth3DSDataset(Dataset):
         else:
             raise ValueError(f'train_test_split should be 0, 1 or 2. not {self.train_test_split}')
         for f in split_files:
-            with open(f'.datasets/teeth3ds/Teeth3DS_split/{f}') as file:
+            with open(f'.datasets/teeth3ds/split/{f}') as file:
                 for l in file:
                     l = f'{l.rstrip()}'
                     l_name = l.split('_')[0]

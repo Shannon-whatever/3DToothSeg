@@ -18,7 +18,7 @@ outputs
 exp
 tmp
 
-# submodules
-submodules/diff-gaussian-rasterization
-scripts
+models/PointTransformer/libs/pointops/build
+models/PointTransformer/libs/pointops/dist
+
 

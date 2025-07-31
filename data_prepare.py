@@ -5,7 +5,7 @@ import json
 from tqdm import tqdm
 
 
-from utils.other_utils import FDI2label, label2color_upper, label2color_lower
+from utils.color_utils import FDI2label, label2color_upper, label2color_lower
 from utils.other_utils import face_labels_to_vertex_labels, output_pred_ply
 
 from prepare_data.mesh_render import render

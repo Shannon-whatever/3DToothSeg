@@ -26,6 +26,7 @@ termcolor
 pyfqmr
 opencv-python
 torchmetrics
+spconv-cu118
 
 
 # flash-attn==2.5.9.post1

@@ -18,20 +18,40 @@ def read_ply_face_center_and_labels(ply_path):
     labels = np.array([color2label[tuple(c)][2] for c in colors], dtype=np.int32)
     return face_centers, labels
 
-def calculate_miou(gt_labels, pred_labels, n_class=17):
-    # tm.JaccardIndex计算gt或pred中出现过的label,忽略未出现的类别
-    pred_labels = torch.tensor(pred_labels)
-    gt_labels = torch.tensor(gt_labels)
+def calculate_miou(gt_labels, pred_labels, n_class=17, 
+                   merge_pairs=[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)]):
+    """
+    Args:
+        pred_classes: Tensor (B, N), predicted class indices
+        labels:       Tensor (B, N), ground truth class indices
+        n_class:      int, number of classes
 
-    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class)
+    Returns:
+        miou_list: Tensor (B,), mIoU for each sample
+        iou0_list: Tensor (B,), IoU for class 0 for each sample
+    """
+    device = gt_labels.device
+
+
+    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class).to(device)
     miou = cal_miou(pred_labels, gt_labels)
 
-    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None)
-    per_class_iou = cal_iou(pred_labels, gt_labels)
+    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None).to(device)
+    per_class_iou = cal_iou(pred_labels, gt_labels) # (C, )
 
-    iou_0 = per_class_iou[0]
+    # 2. 计算合并类别IoU
+    merged_ious = []
+    for a, b in merge_pairs:
+        gt_merge = (gt_labels == a) | (gt_labels == b)
+        pred_merge = (pred_labels == a) | (pred_labels == b)
 
-    return miou, iou_0
+        # 二分类JaccardIndex计算 (B*num_pairs,)
+        binary_iou_metric = tm.JaccardIndex(task="binary", num_classes=2).to(device)
+        merged_iou = binary_iou_metric(pred_merge, gt_merge)
+        merged_ious.append(merged_iou)
+
+    merged_ious = torch.stack(merged_ious, dim=0)  # (num_pairs,)
+    return miou, per_class_iou, merged_ious
 
 def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
     pred_labels = torch.tensor(pred_labels)
