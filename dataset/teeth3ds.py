@@ -321,7 +321,8 @@ class Teeth3DSDataset(Dataset):
     def _load_in_memory(self):
         for f in tqdm(self.file_names, desc="Loading point clouds into memory"):
             data_dict = self._get_data(f)
-            data_dict.update({"file_names": os.path.basename(f)})
+            file_name = f'{f.split("/")[-1]}_{f.split("/")[-2]}'
+            data_dict.update({"file_names": file_name})
             self.in_memory_data.append(data_dict)
 
     def __len__(self):
@@ -334,8 +335,9 @@ class Teeth3DSDataset(Dataset):
         else:
             f = self.file_names[index]
             data_dict = self._get_data(f)
-            data_dict.update({"file_names": os.path.basename(f)})
-            
+            file_name = f'{f.split("/")[-1]}_{f.split("/")[-2]}'
+            data_dict.update({"file_names": file_name})
+
         return data_dict
 
             

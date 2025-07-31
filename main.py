@@ -131,7 +131,7 @@ class ToothSegmentationPipeline:
 
                 self.predict(epoch)
 
-    def predict(self, current_epoch=None):
+    def predict(self, current_epoch=None, save_result=False):
 
 
         self.model.eval()
@@ -184,17 +184,17 @@ class ToothSegmentationPipeline:
                         sample_pred, sample_label, n_class=17)
                     miou_list.append(miou)
 
-                if current_epoch is not None and (current_epoch + 1) == self.args.epochs:
+                if save_result:
                     pred_classes = pred_classes.cpu().numpy().astype(np.uint8)
 
                     bs = len(point_coords)
                     for i in range(bs):
                         file_name_i = file_name[i]
                         if 'upper' in file_name_i:
-                            save_path = os.path.join(self.args.save_predict_mask_dir, 'upper', file_name_i.replace('process', 'predict'))
+                            save_path = os.path.join(self.args.save_predict_mask_dir, 'upper', f"{file_name_i}_predict.ply")
                             pred_mask = upper_palette[pred_classes[i]]
                         elif 'lower' in file_name_i:
-                            save_path = os.path.join(self.args.save_predict_mask_dir, 'lower', file_name_i.replace('process', 'predict'))
+                            save_path = os.path.join(self.args.save_predict_mask_dir, 'lower', f"{file_name_i}_predict.ply")
                             pred_mask = lower_palette[pred_classes[i]]
                         output_pred_ply(pred_mask, None, save_path, point_coords[i], face_info[i])
 
@@ -314,7 +314,7 @@ if __name__ == "__main__":
         pipeline.train()
     else:
         print("Starting prediction...")
-        pipeline.predict()
+        pipeline.predict(save_result=True)
     
     
     
