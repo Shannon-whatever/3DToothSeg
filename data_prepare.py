@@ -33,6 +33,7 @@ class DatasetPrepare():
     def prepare_gt_ply(self):
 
         total_files = self._count_total_obj_files()
+        problem_files = []
 
         with tqdm(total=total_files, desc="Processing meshes") as pbar:
             for view in self.mesh_view:
@@ -45,10 +46,18 @@ class DatasetPrepare():
                             file_view = file_name.split('_')[1]
                             file_save_dir = os.path.join(self.root, self.processed_folder, file_view, file_id)
                             file_save_path = os.path.join(file_save_dir, f'{file_name}.ply')
-                            os.makedirs(file_save_dir, exist_ok=True)
+                            
+                            mesh_path = os.path.join(root, file)
+                            mesh = trimesh.load(mesh_path)
 
-                            mesh = trimesh.load(os.path.join(root, file))
-                            with open(os.path.join(root, file).replace('.obj', '.json')) as f:
+                            anno_path = mesh_path.replace('.obj', '.json')
+                            if not os.path.exists(anno_path):
+                                print(f"Annotation file {anno_path} does not exist, skipping.")
+                                problem_files.append(file_name)
+                                pbar.update(1)
+                                continue
+
+                            with open(mesh_path.replace('.obj', '.json')) as f:
                                 data = json.load(f)
                             labels = np.array(data["labels"])
                             labels = labels[mesh.faces]
@@ -79,13 +88,21 @@ class DatasetPrepare():
 
                             point_coords = mesh.vertices                # shape: (n_vertices, 3)
                             face_info = mesh.faces                      # shape: (n_faces, 3)
+
+                            os.makedirs(file_save_dir, exist_ok=True)
                             output_pred_ply(mask, None, file_save_path, point_coords, face_info, vertex_mask)
 
                             # prepare render data
                             render(os.path.join(root, file), file_save_path, file_save_dir, rend_size=self.render_size, rend_step=self.render_step)
                             pbar.update(1)
 
+        if problem_files != []:
+            print(f"Problematic files: {problem_files}")
+            with open(os.path.join(self.root, self.processed_folder, 'problem_files.txt'), 'w') as f:
+                for item in problem_files:
+                    f.write(f"{item}\n")
+
 if __name__ == '__main__':
 
-    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds/sample', processed_folder='processed', render_step=(2, 2))
+    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds', processed_folder='processed', render_step=(6, 9))
     dataset_prepare.prepare_gt_ply()

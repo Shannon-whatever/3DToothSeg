@@ -50,12 +50,12 @@ class ToothSegmentationPipeline:
 
         train_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=True, train_test_split=self.args.train_test_split, is_train=True,
+            force_process=False, train_test_split=self.args.train_test_split, is_train=True,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
         test_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
-            force_process=True, train_test_split=self.args.train_test_split, is_train=False,
+            force_process=False, train_test_split=self.args.train_test_split, is_train=False,
             num_points=self.args.num_points, sample_points=self.args.sample_points
         )
 
@@ -131,6 +131,7 @@ class ToothSegmentationPipeline:
             if (epoch + 1) % self.args.eval_epoch_step == 0 or (epoch + 1) == self.args.epochs:
 
                 self.predict(epoch)
+                self.model.train()  # Reset to training mode after evaluation
 
     def predict(self, current_epoch=None, save_result=False):
 
@@ -163,9 +164,14 @@ class ToothSegmentationPipeline:
                 file_name = batch_data['file_names']
                 labels = batch_data['labels']
 
+                renders = batch_data['renders'].to(self.device)
+                cameras_Rt = batch_data['cameras_Rt'].to(self.device)
+                cameras_K = batch_data['cameras_K'].to(self.device)
+
+
                 pointcloud = pointcloud.to(self.device)
                 labels = labels.to(self.device)
-                point_seg_result = self.model(pointcloud) # (B, num_classes, N_pc)
+                _, _, point_seg_result, _ = self.model(pointcloud, renders, cameras_Rt, cameras_K) # (B, num_classes, N_pc)
                 # pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
                 # _, pred_classes = torch.max(pred_softmax, dim=1) # (B, N_pc)
 

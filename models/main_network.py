@@ -236,12 +236,18 @@ class ToothSegNet(nn.Module):
             batch = inputs[start:end]  # (B', C, H, W)
             out1, out2, out3 = self.seg_model_2d(batch)
             outputs1.append(out1)
-            outputs2.append(out2)
-            outputs3.append(out3)
+            if out2 is not None:
+                outputs2.append(out2)
+            else:
+                outputs2 = None
+            if out3 is not None:
+                outputs3.append(out3)
+            else:
+                outputs3 = None
         return (
             torch.cat(outputs1, dim=0),
-            torch.cat(outputs2, dim=0),
-            torch.cat(outputs3, dim=0)
+            torch.cat(outputs2, dim=0) if outputs2 is not None else None,
+            torch.cat(outputs3, dim=0) if outputs3 is not None else None
         )
 
     def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):

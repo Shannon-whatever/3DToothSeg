@@ -4,6 +4,8 @@ import einops
 from models.PointTransformer.libs.pointops.functions import pointops
 import os
 
+from torchinfo import summary
+
 
 class LayerNorm1d(nn.BatchNorm1d):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
@@ -377,7 +379,16 @@ class PointTransformerSeg50(PointTransformerSeg):
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-    input = torch.ones((2, 6, 16000)).cuda()
+    input = torch.ones((1, 6, 16000)).cuda()
     model = PointTransformerSeg38(in_channels=6, num_classes=17, pretrain=False, enable_pic_feat=False).cuda()
+    # 打印结构：假设输入是 (B, C, N)
+    # 打印网络结构
+    summary(
+        model,
+        input_size=(1, 6, 16000),  # 输入形状 (B, C, N)
+        col_names=["input_size", "output_size", "num_params", "kernel_size"],
+        # depth=5,  # 控制层次展开深度
+        verbose=1,
+    )
     seg_result, edge_seg_result = model(input)
-    print(edge_seg_result.shape)
+    # print(edge_seg_result.shape)

@@ -113,7 +113,7 @@ class PSPNet(nn.Module):
             # return x.max(1)[1], main_loss, aux_loss, out_feature
             return x, aux, out_feature
         else:
-            return x, out_feature
+            return x, None, out_feature
 
 
 if __name__ == '__main__':

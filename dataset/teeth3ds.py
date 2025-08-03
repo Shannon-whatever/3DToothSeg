@@ -110,8 +110,13 @@ class Teeth3DSDataset(Dataset):
                     l = f'{l.rstrip()}'
                     l_name = l.split('_')[0]
                     l_view = l.split('_')[1]
-
-                    self.file_names.append(os.path.join(self.root, self.processed_folder, l_view, l_name))
+                    
+                    process_dir = os.path.join(self.root, self.processed_folder, l_view, l_name)
+                    if os.path.exists(os.path.join(process_dir, f"{l_name}_{l_view}_process.ply")):
+                        self.file_names.append(process_dir)
+                    else:
+                        print(f"Processed file {l_name}_{l_view}_process.ply does not exist, skipping.")
+                        continue
 
 
 
@@ -176,7 +181,7 @@ class Teeth3DSDataset(Dataset):
             raw_mesh_folder = os.path.join(self.root, view)
             process_mesh_folder = os.path.join(self.root, self.processed_folder, view)
             files_processed.extend(filter_files(process_mesh_folder, '_process.ply'))
-            files_raw.extend(filter_files(raw_mesh_folder, 'obj'))
+            files_raw.extend(filter_files(raw_mesh_folder, 'json'))
         return len(files_processed) == len(files_raw)
 
     def _process(self):
@@ -198,9 +203,16 @@ class Teeth3DSDataset(Dataset):
                             file_name = file.replace('.obj', '')
                             file_id = file_name.split('_')[0]
                             file_view = file_name.split('_')[1]
-                            mesh = trimesh.load(os.path.join(root, file))
+                            mesh_path = os.path.join(root, file)
+                            mesh = trimesh.load(mesh_path)
 
-                            with open(os.path.join(root, file).replace('.obj', '.json')) as f:
+                            anno_path = mesh_path.replace('.obj', '.json')
+                            if not os.path.exists(anno_path):
+                                print(f"Annotation file {anno_path} does not exist, skipping.")
+                                pbar.update(1)
+                                continue
+
+                            with open(anno_path) as f:
                                 data = json.load(f)
 
                             labels = np.array(data["labels"])
