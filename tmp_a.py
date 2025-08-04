@@ -188,3 +188,21 @@ plt.ylabel("Number of Sample IDs")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+
+# %%
+import torch
+
+
+pred = torch.tensor([[1, 2, 3, 6], [4, 5, 6, 8]])
+gt_labels = torch.tensor([[1, -1, 3, 5], [4, 5, -1, 7]])
+
+bs = gt_labels.shape[0]
+valid_mask = (gt_labels != -1)
+
+pred_masked = pred.clone()
+gt_masked = gt_labels.clone()
+
+pred_masked = pred_masked[valid_mask].reshape(bs, -1)
+gt_masked = gt_masked[valid_mask].reshape(bs, -1)
+# %%

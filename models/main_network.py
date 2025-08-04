@@ -35,29 +35,45 @@ class ToothSegNet(nn.Module):
         self.seg_model_2d = PSPNet(layers=50, classes=num_classes+1, zoom_factor=8, use_ppm=True, pretrained=True, output_intermediate=False)
 
         # 加载训练权重
-        if use_pretrain is None or use_pretrain == pretrain_3d_path:
+        if use_pretrain is not None:
+            if use_pretrain == pretrain_3d_path:
 
-            # 加载 3D 预训练模型
-            print(f"Loading 3d pretrained model from {pretrain_3d_path}")
-            pretrained_model = torch.load(pretrain_3d_path)
-            self.seg_model_3d.load_state_dict(pretrained_model)
+                # 加载 3D 预训练模型
+                print(f"Loading 3d pretrained model from {pretrain_3d_path}")
+                pretrained_model = torch.load(pretrain_3d_path)
+                self.seg_model_3d.load_state_dict(pretrained_model)
 
-            # 加载 2D 预训练模型
-            print(f"Loading 2d pretrained model from {pretrain_2d_path}")
-            pretrained_model = torch.load(pretrain_2d_path)
-            pretrained_weights = pretrained_model['state_dict']
-            pretrained_weights = {k.replace('module.', ''): v for k, v in pretrained_weights.items()}
-            # 过滤掉和分类头相关的权重（cls 和 aux）
-            keys_to_remove = [k for k in pretrained_weights.keys() if k.startswith('cls.4') or k.startswith('aux.4')]
-            for k in keys_to_remove:
-                pretrained_weights.pop(k)
+                # 加载 2D 预训练模型
+                print(f"Loading 2d pretrained model from {pretrain_2d_path}")
+                pretrained_model = torch.load(pretrain_2d_path)
+                pretrained_weights = pretrained_model['state_dict']
+                pretrained_weights = {k.replace('module.', ''): v for k, v in pretrained_weights.items()}
+                # 过滤掉和分类头相关的权重（cls 和 aux）
+                keys_to_remove = [k for k in pretrained_weights.keys() if k.startswith('cls.4') or k.startswith('aux.4')]
+                for k in keys_to_remove:
+                    pretrained_weights.pop(k)
 
-            self.seg_model_2d.load_state_dict(pretrained_weights, strict=False)
+                self.seg_model_2d.load_state_dict(pretrained_weights, strict=False)
+        
+            else:
+                print(f"Loading pretrained model from {use_pretrain}")
+                pretrained_model = torch.load(use_pretrain)
+                self.load_state_dict(pretrained_model['model_state_dict'], strict=True)
         
         else:
-            print(f"Loading pretrained model from {use_pretrain}")
-            pretrained_model = torch.load(use_pretrain)
-            self.load_state_dict(pretrained_model['model_state_dict'], strict=True)
+
+                # 加载 2D 预训练模型
+                print(f"Loading 2d pretrained model from {pretrain_2d_path}")
+                pretrained_model = torch.load(pretrain_2d_path)
+                pretrained_weights = pretrained_model['state_dict']
+                pretrained_weights = {k.replace('module.', ''): v for k, v in pretrained_weights.items()}
+                # 过滤掉和分类头相关的权重（cls 和 aux）
+                keys_to_remove = [k for k in pretrained_weights.keys() if k.startswith('cls.4') or k.startswith('aux.4')]
+                for k in keys_to_remove:
+                    pretrained_weights.pop(k)
+
+                self.seg_model_2d.load_state_dict(pretrained_weights, strict=False)
+
 
     def project_points(self, cameras_Rt, cameras_K, points, render_size, 
                        normalize=False):
@@ -264,7 +280,7 @@ class ToothSegNet(nn.Module):
     def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):
 
 
-        if not self.use_pretrain_3d:
+        if self.use_pretrain is None:
 
             renders = rearrange(renders, 'b nv c h w -> (b nv) c h w') # (B, N_v, 3, H, W) -> (B*N_v, 3, H, W)
             render_size = renders.shape[-2:]

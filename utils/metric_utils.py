@@ -18,7 +18,7 @@ def read_ply_face_center_and_labels(ply_path):
     labels = np.array([color2label[tuple(c)][2] for c in colors], dtype=np.int32)
     return face_centers, labels
 
-def calculate_miou(gt_labels, pred_labels, n_class=17, 
+def calculate_miou(gt_labels, pred_labels, n_class=17, ignore_index=-1,
                    merge_pairs=[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)]):
     """
     Args:
@@ -31,13 +31,22 @@ def calculate_miou(gt_labels, pred_labels, n_class=17,
         iou0_list: Tensor (B,), IoU for class 0 for each sample
     """
     device = gt_labels.device
+    bs = gt_labels.shape[0]
 
 
-    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class, ignore_index=-1).to(device)
-    miou = cal_miou(pred_labels, gt_labels)
+    valid_mask = (gt_labels != ignore_index)
 
-    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None, ignore_index=-1).to(device)
-    per_class_iou = cal_iou(pred_labels, gt_labels) # (C, )
+    pred_masked = pred_labels.clone()
+    gt_masked = gt_labels.clone()
+
+    pred_masked = pred_masked[valid_mask].reshape(bs, -1)
+    gt_masked = gt_masked[valid_mask].reshape(bs, -1)
+    
+    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class).to(device)
+    miou = cal_miou(pred_masked, gt_masked)
+
+    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None).to(device)
+    per_class_iou = cal_iou(pred_masked, gt_masked) # (C, )
 
     # 2. 计算合并类别IoU
     merged_ious = []
