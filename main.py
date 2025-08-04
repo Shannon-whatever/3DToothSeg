@@ -27,10 +27,8 @@ class ToothSegmentationPipeline:
 
         self.get_dataloader()
 
-        if args.train:
-            self.build_model(num_classes=17, is_train=args.train)
-        else:
-            self.build_model(num_classes=17 + 2, is_train=args.train)
+
+        self.build_model(num_classes=17, use_pretrain=self.args.load_ckp)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.args.epochs, eta_min=1e-6)
@@ -72,9 +70,9 @@ class ToothSegmentationPipeline:
         )
 
 
-    def build_model(self, num_classes, is_train=False):
+    def build_model(self, num_classes, use_pretrain):
         self.model = ToothSegNet(
-            in_channels=6, num_classes=num_classes, is_train=is_train).to(self.device)
+            in_channels=6, num_classes=num_classes, use_pretrain=use_pretrain).to(self.device)
 
     def train(self):
         
@@ -297,20 +295,21 @@ class ToothSegmentationPipeline:
     
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='.datasets/teeth3ds/sample')
+    parser.add_argument('--data_dir', type=str, default='.datasets/teeth3ds')
     parser.add_argument('--num_points', type=int, default=16000)
     parser.add_argument('--sample_points', type=int, default=16000)
     parser.add_argument('--sample_views', type=int, default=4)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--save_dir', type=str, default='exp/sample_test')
+    parser.add_argument('--save_dir', type=str, default='exp/train')
     parser.add_argument('--eval_epoch_step', type=int, default=1)
     parser.add_argument('--device', type=str, default='cuda:0' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--train_test_split', type=int, choices=[0, 1, 2], default=0)
     parser.add_argument('--train', action='store_true', help='Run training')
     parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases for logging')
+    parser.add_argument('--load_ckp', type=str, default=None, help='Use trained checkpoint path')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -329,7 +328,7 @@ if __name__ == "__main__":
         pipeline.train()
     else:
         print("Starting prediction...")
-        pipeline.predict(save_result=True)
+        pipeline.predict(save_result=False)
     
     
     

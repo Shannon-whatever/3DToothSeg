@@ -10,35 +10,41 @@ from utils.color_utils import color2label
 
 class ToothSegNet(nn.Module):
     def __init__(self, in_channels=6, num_classes=17, 
-                 use_pretrain_3d='models/PTv1/point_best_model.pth', 
-                 use_pretrain_2d='.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth',
-                 is_train=False):
+                 pretrain_3d_path='models/PTv1/point_best_model.pth', 
+                 pretrain_2d_path='.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth',
+                 use_pretrain=None,
+                 ):
         super().__init__()
 
-        self.is_train = is_train
-        if is_train:
-            use_pretrain_3d = None
+        self.use_pretrain = use_pretrain
+
+        if use_pretrain is None or use_pretrain != pretrain_3d_path:
+
             self.seg_model_3d = PointTransformerSeg38(
-                in_channels=in_channels, num_classes=num_classes,
-                pretrain=False, add_cbl=True, enable_pic_feat=True
+            in_channels=in_channels, num_classes=num_classes,
+            pretrain=False, add_cbl=True, enable_pic_feat=True
             )
-        else:
+                
+        else: 
             self.seg_model_3d = PointTransformerSeg38(
-                in_channels=in_channels, num_classes=num_classes,
+                in_channels=in_channels, num_classes=num_classes + 2,
                 pretrain=False, add_cbl=False, enable_pic_feat=False
             )
 
+            
         self.seg_model_2d = PSPNet(layers=50, classes=num_classes+1, zoom_factor=8, use_ppm=True, pretrained=True, output_intermediate=False)
 
+        # 加载训练权重
+        if use_pretrain is None or use_pretrain == pretrain_3d_path:
 
-        if use_pretrain_3d is not None:
-            print(f"Loading 3d pretrained model from {use_pretrain_3d}")
-            pretrained_model = torch.load(use_pretrain_3d)
+            # 加载 3D 预训练模型
+            print(f"Loading 3d pretrained model from {pretrain_3d_path}")
+            pretrained_model = torch.load(pretrain_3d_path)
             self.seg_model_3d.load_state_dict(pretrained_model)
 
-        if use_pretrain_2d is not None:
-            print(f"Loading 2d pretrained model from {use_pretrain_2d}")
-            pretrained_model = torch.load(use_pretrain_2d)
+            # 加载 2D 预训练模型
+            print(f"Loading 2d pretrained model from {pretrain_2d_path}")
+            pretrained_model = torch.load(pretrain_2d_path)
             pretrained_weights = pretrained_model['state_dict']
             pretrained_weights = {k.replace('module.', ''): v for k, v in pretrained_weights.items()}
             # 过滤掉和分类头相关的权重（cls 和 aux）
@@ -47,6 +53,11 @@ class ToothSegNet(nn.Module):
                 pretrained_weights.pop(k)
 
             self.seg_model_2d.load_state_dict(pretrained_weights, strict=False)
+        
+        else:
+            print(f"Loading pretrained model from {use_pretrain}")
+            pretrained_model = torch.load(use_pretrain)
+            self.load_state_dict(pretrained_model['model_state_dict'], strict=True)
 
     def project_points(self, cameras_Rt, cameras_K, points, render_size, 
                        normalize=False):
@@ -253,7 +264,7 @@ class ToothSegNet(nn.Module):
     def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):
 
 
-        if self.is_train:
+        if not self.use_pretrain_3d:
 
             renders = rearrange(renders, 'b nv c h w -> (b nv) c h w') # (B, N_v, 3, H, W) -> (B*N_v, 3, H, W)
             render_size = renders.shape[-2:]
@@ -269,11 +280,12 @@ class ToothSegNet(nn.Module):
             # 只取标准化后的点云坐标和法向量
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
             predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
+            
             return predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux
         
         else:
-            # predict_2d_masks = self.seg_model_2d(renders)
+            
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
             predict_pc_labels, _ = self.seg_model_3d(pc)
 
-            return predict_pc_labels
+            return None, None, predict_pc_labels, None
