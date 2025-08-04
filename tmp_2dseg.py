@@ -98,15 +98,15 @@ class PSPNet(nn.Module):
             aux = self.aux(x_tmp)
             if self.zoom_factor != 1:
                 aux = F.interpolate(aux, size=(h, w), mode='bilinear', align_corners=True)
-            main_loss = self.criterion(x, y)
-            aux_loss = self.criterion(aux, y)
-            return x.max(1)[1], main_loss, aux_loss
+            # main_loss = self.criterion(x, y)
+            # aux_loss = self.criterion(aux, y)
+            return x  # x.max(1)[1], main_loss, aux_loss
         else:
             return x
 
 
 if __name__ == '__main__':
-    input = torch.rand(4, 3, 1025, 1025).cuda() # 473 for 101; 465 for 50  assert (size-1) % 8 == 0
+    input = torch.rand(16, 3, 465, 465).cuda() # 473 for 101; 465 for 50  assert (size-1) % 8 == 0
     # zoom factor for final prediction during training, be in [1, 2, 4, 8]
     model = PSPNet(layers=50, classes=17, zoom_factor=8, use_ppm=True, pretrained=True).cuda()
     pretrained_model = torch.load('.checkpoints/PSPNet/train_ade20k_pspnet50_epoch_100.pth')
@@ -119,7 +119,7 @@ if __name__ == '__main__':
 
 
     model.load_state_dict(pretrained_weights, strict=False)
-    model.eval()
+    model.train()
     # print(model)
     output = model(input)  # (4, 17, 465, 465)
     print('PSPNet', output.size())

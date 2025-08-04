@@ -33,10 +33,10 @@ def calculate_miou(gt_labels, pred_labels, n_class=17,
     device = gt_labels.device
 
 
-    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class).to(device)
+    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class, ignore_index=-1).to(device)
     miou = cal_miou(pred_labels, gt_labels)
 
-    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None).to(device)
+    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None, ignore_index=-1).to(device)
     per_class_iou = cal_iou(pred_labels, gt_labels) # (C, )
 
     # 2. 计算合并类别IoU
@@ -52,6 +52,7 @@ def calculate_miou(gt_labels, pred_labels, n_class=17,
 
     merged_ious = torch.stack(merged_ious, dim=0)  # (num_pairs,)
     return miou, per_class_iou, merged_ious
+
 
 def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
     pred_labels = torch.tensor(pred_labels)
@@ -75,13 +76,13 @@ def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
 
     return cal_weighted_miou, iou_0
 
-def calculate_per_class_iou(gt_labels, pred_labels, n_class=17):
-    pred_labels = torch.as_tensor(pred_labels)
-    gt_labels = torch.as_tensor(gt_labels)
+# def calculate_per_class_iou(gt_labels, pred_labels, n_class=17):
+#     pred_labels = torch.as_tensor(pred_labels)
+#     gt_labels = torch.as_tensor(gt_labels)
 
-    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None)
-    per_class_iou = cal_iou(pred_labels, gt_labels)
-    return per_class_iou
+#     cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None)
+#     per_class_iou = cal_iou(pred_labels, gt_labels)
+#     return per_class_iou
 
 
 def compute_boundary_mask(face_centers, labels, threshold=4, k=8):
@@ -115,24 +116,24 @@ def compute_boundary_mask(face_centers, labels, threshold=4, k=8):
     return boundary_mask
 
 
-def calculate_merged_ious(gt_labels, pred_labels, eps=True):
-    merged_ious = {}
-    merge_pairs = [
-        (1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)
-    ]
+# def calculate_merged_ious(gt_labels, pred_labels, eps=True):
+#     merged_ious = {}
+#     merge_pairs = [
+#         (1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)
+#     ]
 
-    for a, b in merge_pairs:
-        gt_merge = (gt_labels == a) | (gt_labels == b)
-        pred_merge = (pred_labels == a) | (pred_labels == b)
-        intersection = np.logical_and(gt_merge, pred_merge).sum()
-        union = np.logical_or(gt_merge, pred_merge).sum()
+#     for a, b in merge_pairs:
+#         gt_merge = (gt_labels == a) | (gt_labels == b)
+#         pred_merge = (pred_labels == a) | (pred_labels == b)
+#         intersection = np.logical_and(gt_merge, pred_merge).sum()
+#         union = np.logical_or(gt_merge, pred_merge).sum()
 
-        if eps:
-            iou = intersection / (union + 1e-6)
-            merged_ious[f"T{a}/T{b}"] = iou
-        else:
-            if union != 0:
-                iou = intersection / union
-                merged_ious[f"T{a}/T{b}"] = iou
+#         if eps:
+#             iou = intersection / (union + 1e-6)
+#             merged_ious[f"T{a}/T{b}"] = iou
+#         else:
+#             if union != 0:
+#                 iou = intersection / union
+#                 merged_ious[f"T{a}/T{b}"] = iou
 
-    return merged_ious
+#     return merged_ious

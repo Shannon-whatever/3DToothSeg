@@ -98,4 +98,93 @@ plt.imshow(img)
 plt.scatter(x, y)
 plt.axis('off')
 plt.show()
+
+
+
 # %%
+import os
+
+def count_render_images(base_dir, expected_count=48):
+    error_samples = []
+
+    for subfolder in ['upper', 'lower']:
+        sub_dir = os.path.join(base_dir, subfolder)
+        for sample_id in os.listdir(sub_dir):
+            sample_path = os.path.join(sub_dir, sample_id)
+            render_dir = os.path.join(sample_path, 'render')
+
+            if not os.path.isdir(render_dir):
+                print(f"Warning: render folder not found for sample {sample_id} in {subfolder}")
+                continue
+
+            img_count = len([f for f in os.listdir(render_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+            if img_count != expected_count:
+                error_samples.append((subfolder, sample_id, img_count))
+
+    return error_samples
+
+# 使用方式
+base_path = '.datasets/teeth3ds/processed'  # 请根据实际路径修改
+errors = count_render_images(base_path)
+
+# 打印结果
+if errors:
+    print(f"\nSamples with image count not equal to 48:")
+    for subfolder, sid, count in errors:
+        print(f"{subfolder}/{sid}: {count} images")
+else:
+    print("All samples have 48 images.")
+
+# 保存到 txt 文件
+output_path = "exp/render_image_count_errors.txt"
+with open(output_path, "w") as f:
+    if errors:
+        f.write("Samples with image count not equal to 48:\n")
+        for subfolder, sid, count in errors:
+            f.write(f"{subfolder}/{sid}: {count} images\n")
+    else:
+        f.write("All samples have 48 images.\n")
+
+print(f"Results written to {output_path}")
+
+
+# %%
+import os
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+base_dirs = ["./processed/upper", "./processed/lower"]
+image_exts = {".png", ".jpg", ".jpeg"}
+
+image_counts = {}
+
+for base_dir in base_dirs:
+    if not os.path.exists(base_dir):
+        print(f"Directory not found: {base_dir}")
+        continue
+
+    for sample_id in os.listdir(base_dir):
+        sample_path = os.path.join(base_dir, sample_id)
+        render_dir = os.path.join(sample_path, "render")
+        if not os.path.isdir(render_dir):
+            print(f"No render dir for {sample_id}")
+            continue
+
+        images = [f for f in os.listdir(render_dir)
+                  if os.path.isfile(os.path.join(render_dir, f)) and os.path.splitext(f)[-1].lower() in image_exts]
+
+        image_counts[sample_id] = len(images)
+
+# 输出每个 sample_id 的图片数量（供 debug）
+for sid, count in image_counts.items():
+    print(f"{sid}: {count} images")
+
+# 绘制直方图
+plt.figure(figsize=(10, 6))
+plt.hist(list(image_counts.values()), bins=range(0, max(image_counts.values()) + 5, 2), color='skyblue', edgecolor='black')
+plt.title("Distribution of Image Counts in Render Folders")
+plt.xlabel("Number of Images")
+plt.ylabel("Number of Sample IDs")
+plt.grid(True)
+plt.tight_layout()
+plt.show()

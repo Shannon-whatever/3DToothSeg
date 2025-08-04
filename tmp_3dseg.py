@@ -379,7 +379,7 @@ class PointTransformerSeg50(PointTransformerSeg):
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-    input = torch.ones((1, 6, 16000)).cuda()
+    input = torch.ones((4, 6, 16000)).cuda()
     model = PointTransformerSeg38(in_channels=6, num_classes=17, pretrain=False, enable_pic_feat=False).cuda()
     # 打印结构：假设输入是 (B, C, N)
     # 打印网络结构
@@ -391,4 +391,4 @@ if __name__ == '__main__':
         verbose=1,
     )
     seg_result, edge_seg_result = model(input)
-    # print(edge_seg_result.shape)
+    print(edge_seg_result.shape)

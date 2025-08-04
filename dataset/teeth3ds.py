@@ -11,6 +11,8 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 import cv2
 import torch
+import random
+import re
 
 
 from dataset import data_util
@@ -21,14 +23,14 @@ from utils.color_utils import FDI2label, label2color_upper, label2color_lower
 from utils.other_utils import rgb_mask_to_label
 
 
-
+random.seed(42)
 
 class Teeth3DSDataset(Dataset):
 
     def __init__(self, root: str = '.datasets/teeth3ds', processed_folder: str = 'processed',
                  in_memory: bool = False,
                  force_process=False, train_test_split=1, is_train=True, 
-                 num_points=16000, sample_points=16000):
+                 num_points=16000, sample_points=16000, sample_views=4):
         
         self.root = root
         self.processed_folder = processed_folder
@@ -39,12 +41,14 @@ class Teeth3DSDataset(Dataset):
         self.mesh_view = ['upper', 'lower']
 
         self.num_points = num_points
+        self.sample_views = sample_views
 
         value_scale = 255
         mean = [0.485, 0.456, 0.406]
         mean = [item * value_scale for item in mean]
         std = [0.229, 0.224, 0.225]
         std = [item * value_scale for item in std]
+
         
         if is_train:
             self.point_transform = transforms.Compose(
@@ -253,6 +257,11 @@ class Teeth3DSDataset(Dataset):
                             pbar.update(1)
 
 
+    def extract_view_idx(self, path):
+        filename = os.path.basename(path)
+        match = re.search(r'_([0-9]+)\.png$', filename)
+        return int(match.group(1)) if match else -1
+
     def _get_data(self, file_path):
         
         file_name = f'{file_path.split("/")[-1]}_{file_path.split("/")[-2]}'
@@ -275,22 +284,37 @@ class Teeth3DSDataset(Dataset):
 
         pointcloud = np.concatenate((cell_coords, cell_normals), axis=1) # (N, 6)
 
-        if pointcloud.shape[0] < self.num_points:
-            padding = np.zeros((self.num_points - pointcloud.shape[0], pointcloud.shape[1]))
-            face_info = np.concatenate((face_info, np.zeros(shape=(self.num_points - pointcloud.shape[0], 3))), axis=0)
-            pointcloud = np.concatenate((pointcloud, padding), axis=0)
-
         # labels
         labels = load_color_from_ply(mesh_path)
+        
+        if pointcloud.shape[0] < self.num_points:
+            pad_points = self.num_points - pointcloud.shape[0]
+            padding = np.zeros((pad_points, pointcloud.shape[1]))
+            face_info = np.concatenate((face_info, np.zeros(shape=(pad_points, 3))), axis=0)
+            pointcloud = np.concatenate((pointcloud, padding), axis=0)
+
+            # 补 labels，padding 用 -1 表示无效标签
+            padding_labels = np.full((pad_points,), -1, dtype=labels.dtype)
+            labels = np.concatenate((labels, padding_labels), axis=0)
+
+        
 
 
         pointcloud, labels, face_info = self.point_transform([pointcloud, labels, face_info])
 
         # image
-        image_path_ls = sorted(glob(os.path.join(file_path, 'render', '*.png'))) 
-        label_path_ls = sorted(glob(os.path.join(file_path, 'mask', '*.png')))
+        image_path_ls = sorted(glob(os.path.join(file_path, 'render', '*.png')), key=self.extract_view_idx) 
+        label_path_ls = sorted(glob(os.path.join(file_path, 'mask', '*.png')), key=self.extract_view_idx)
+
+         # 随机采样 a 个 index（确保顺序一致）
+        total_views = len(image_path_ls)
+        sample_views = sorted(random.sample(range(total_views), self.sample_views))
+
         renders, masks = [], []
-        for image_path, label_path in zip(image_path_ls, label_path_ls):
+        for i in sample_views:
+            image_path = image_path_ls[i]
+            label_path = label_path_ls[i]
+
             image = cv2.imread(image_path, cv2.IMREAD_COLOR)  # BGR 3 channel ndarray wiht shape H * W * 3
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
             image = np.float32(image)
@@ -311,12 +335,14 @@ class Teeth3DSDataset(Dataset):
         renders = torch.stack(renders, dim=0)  # (N_v, 3, H, W)
         masks = torch.stack(masks, dim=0)  # (N_v, H, W)
 
+
         # cameras
         with open(os.path.join(file_path, f'{file_name}_view.json'), 'r') as f:
             camera_params = json.load(f)
 
-        cameras_rt = torch.stack([torch.tensor(cam["Rt"], dtype=torch.float32) for cam in camera_params])
-        cameras_k = torch.stack([torch.tensor(cam["K"], dtype=torch.float32) for cam in camera_params])
+        cameras_rt = torch.stack([torch.tensor(camera_params[i]["Rt"], dtype=torch.float32) for i in sample_views])
+        cameras_k = torch.stack([torch.tensor(camera_params[i]["K"], dtype=torch.float32) for i in sample_views])
+
 
         return_dict = {
             "pointcloud": pointcloud, # (N_pc, 9) face center coord norm + face normal + face center coord ori

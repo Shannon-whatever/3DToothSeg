@@ -34,7 +34,7 @@ class ToothSegmentationPipeline:
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.args.epochs, eta_min=1e-6)
-        self.criterion_ce = torch.nn.CrossEntropyLoss()
+        self.criterion_ce = torch.nn.CrossEntropyLoss(ignore_index=-1)
         self.criterion_cbl = CBLLoss().to(self.device)
 
         if args.use_wandb:
@@ -43,20 +43,20 @@ class ToothSegmentationPipeline:
             self.logger = None
 
     def get_dataloader(self):
-        upper_files = glob.glob(os.path.join(self.args.data_dir, 'upper', '*.ply'))
-        lower_files = glob.glob(os.path.join(self.args.data_dir, 'lower', '*.ply'))
-        file_list = upper_files + lower_files
-        print(f"Found {len(file_list)} ply files in {self.args.data_dir}")
+        # upper_files = glob.glob(os.path.join(self.args.data_dir, 'upper', '*.ply'))
+        # lower_files = glob.glob(os.path.join(self.args.data_dir, 'lower', '*.ply'))
+        # file_list = upper_files + lower_files
+        # print(f"Found {len(file_list)} ply files in {self.args.data_dir}")
 
         train_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
             force_process=False, train_test_split=self.args.train_test_split, is_train=True,
-            num_points=self.args.num_points, sample_points=self.args.sample_points
+            num_points=self.args.num_points, sample_points=self.args.sample_points, sample_views=self.args.sample_views
         )
         test_dataset = Teeth3DSDataset(
             root=self.args.data_dir, in_memory=False,
             force_process=False, train_test_split=self.args.train_test_split, is_train=False,
-            num_points=self.args.num_points, sample_points=self.args.sample_points
+            num_points=self.args.num_points, sample_points=self.args.sample_points, sample_views=self.args.sample_views
         )
 
         print(f"Dataset size: Train: {len(train_dataset)}, Test: {len(test_dataset)}")
@@ -300,6 +300,7 @@ def get_args():
     parser.add_argument('--data_dir', type=str, default='.datasets/teeth3ds/sample')
     parser.add_argument('--num_points', type=int, default=16000)
     parser.add_argument('--sample_points', type=int, default=16000)
+    parser.add_argument('--sample_views', type=int, default=4)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=1e-3)
