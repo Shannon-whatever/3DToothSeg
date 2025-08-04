@@ -17,6 +17,7 @@ class ToothSegNet(nn.Module):
         super().__init__()
 
         self.use_pretrain = use_pretrain
+        self.use_pretrain_3d = False # use pretrained 3D model in pretrain_3d_path
 
         if use_pretrain is None or use_pretrain != pretrain_3d_path:
 
@@ -24,6 +25,7 @@ class ToothSegNet(nn.Module):
             in_channels=in_channels, num_classes=num_classes,
             pretrain=False, add_cbl=True, enable_pic_feat=True
             )
+   
                 
         else: 
             self.seg_model_3d = PointTransformerSeg38(
@@ -31,6 +33,7 @@ class ToothSegNet(nn.Module):
                 pretrain=False, add_cbl=False, enable_pic_feat=False
             )
 
+            self.use_pretrain_3d = True
             
         self.seg_model_2d = PSPNet(layers=50, classes=num_classes+1, zoom_factor=8, use_ppm=True, pretrained=True, output_intermediate=False)
 
@@ -280,7 +283,7 @@ class ToothSegNet(nn.Module):
     def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):
 
 
-        if self.use_pretrain is None:
+        if not self.use_pretrain_3d:
 
             renders = rearrange(renders, 'b nv c h w -> (b nv) c h w') # (B, N_v, 3, H, W) -> (B*N_v, 3, H, W)
             render_size = renders.shape[-2:]

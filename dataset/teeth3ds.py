@@ -30,7 +30,8 @@ class Teeth3DSDataset(Dataset):
     def __init__(self, root: str = '.datasets/teeth3ds', processed_folder: str = 'processed',
                  in_memory: bool = False,
                  force_process=False, train_test_split=1, is_train=True, 
-                 num_points=16000, sample_points=16000, sample_views=4):
+                 num_points=16000, sample_points=16000, sample_views=4,
+                 provide_files=None):
         
         self.root = root
         self.processed_folder = processed_folder
@@ -42,6 +43,8 @@ class Teeth3DSDataset(Dataset):
 
         self.num_points = num_points
         self.sample_views = sample_views
+
+        self.provide_files = provide_files
 
         value_scale = 255
         mean = [0.485, 0.456, 0.406]
@@ -98,6 +101,24 @@ class Teeth3DSDataset(Dataset):
         
         
     def _set_file_index(self, is_train: bool):
+
+        if self.provide_files:
+            print(f"Using provided files from {self.provide_files}")
+            with open(self.provide_files, 'r') as f:
+                for l in f:
+                    l = f'{l.rstrip()}'
+                    l_name = l.split('_')[0]
+                    l_view = l.split('_')[1]
+                    
+                    process_dir = os.path.join(self.root, self.processed_folder, l_view, l_name)
+                    if os.path.exists(os.path.join(process_dir, f"{l_name}_{l_view}_process.ply")):
+                        self.file_names.append(process_dir)
+                    else:
+                        print(f"Processed file {l_name}_{l_view}_process.ply does not exist, skipping.")
+                        continue
+            return
+
+
         if self.train_test_split == 1:
             split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',
                                                                                          'testing_upper.txt']
@@ -108,6 +129,8 @@ class Teeth3DSDataset(Dataset):
             split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
         else:
             raise ValueError(f'train_test_split should be 0, 1 or 2. not {self.train_test_split}')
+        
+
         for f in split_files:
             with open(f'.datasets/teeth3ds/split/{f}') as file:
                 for l in file:

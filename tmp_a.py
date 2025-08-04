@@ -191,18 +191,72 @@ plt.show()
 
 
 # %%
+
+
+
+# %%
+import torchmetrics as tm
 import torch
 
 
-pred = torch.tensor([[1, 2, 3, 6], [4, 5, 6, 8]])
-gt_labels = torch.tensor([[1, -1, 3, 5], [4, 5, -1, 7]])
+def calculate_miou(gt_labels, pred_labels, n_class=17, ignore_index=-1,
+                   merge_pairs=[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)]):
+    """
+    Args:
+        pred_classes: Tensor (B, N), predicted class indices
+        labels:       Tensor (B, N), ground truth class indices
+        n_class:      int, number of classes
 
-bs = gt_labels.shape[0]
-valid_mask = (gt_labels != -1)
+    Returns:
+        miou_list: Tensor (B,), mIoU for each sample
+        iou0_list: Tensor (B,), IoU for class 0 for each sample
+    """
+    device = gt_labels.device
+    bs = gt_labels.shape[0]
 
-pred_masked = pred.clone()
-gt_masked = gt_labels.clone()
 
-pred_masked = pred_masked[valid_mask].reshape(bs, -1)
-gt_masked = gt_masked[valid_mask].reshape(bs, -1)
+    valid_mask = (gt_labels != ignore_index)
+
+    pred_masked = pred_labels.clone()
+    gt_masked = gt_labels.clone()
+
+    pred_masked = pred_masked[valid_mask].reshape(bs, -1)
+    gt_masked = gt_masked[valid_mask].reshape(bs, -1)
+    
+    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class).to(device)
+    miou = cal_miou(pred_masked, gt_masked)
+
+    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None).to(device)
+    per_class_iou = cal_iou(pred_masked, gt_masked) # (C, )
+
+    # 2. 计算合并类别IoU
+    merged_ious = []
+    for a, b in merge_pairs:
+        gt_merge = (gt_labels == a) | (gt_labels == b)
+        pred_merge = (pred_labels == a) | (pred_labels == b)
+
+        # 二分类JaccardIndex计算 (B*num_pairs,)
+        binary_iou_metric = tm.JaccardIndex(task="binary", num_classes=2).to(device)
+        merged_iou = binary_iou_metric(pred_merge, gt_merge)
+        merged_ious.append(merged_iou)
+
+    merged_ious = torch.stack(merged_ious, dim=0)  # (num_pairs,)
+    return miou, per_class_iou, merged_ious
+
+
+def generate_random_labels(B=4, N=100, n_class=17, ignore_index=-1, ignore_prob=0.1):
+    pred = torch.randint(low=0, high=n_class, size=(B, N))
+    gt = torch.randint(low=0, high=n_class, size=(B, N))
+
+    # 加一些 ignore_index
+    mask = torch.rand((B, N)) < ignore_prob
+    gt[mask] = ignore_index
+
+    return gt, pred
+
+# ------- 执行测试 -------
+gt_labels, pred_labels = generate_random_labels(B=4, N=100, n_class=17, ignore_index=-1)
+
+# 计算mIoU相关指标
+miou, iou_per_class, merged_ious = calculate_miou(gt_labels, pred_labels, n_class=17, ignore_index=-1)
 # %%
