@@ -9,7 +9,7 @@ from torchvision.ops import masks_to_boxes, box_convert
 from torchvision.utils import draw_bounding_boxes
 from torchvision.transforms.functional import to_pil_image
 
-from utils.color_utils import FDI2color, color2label
+from utils.color_utils import FDI2color, color2label, color2FDI
 
 def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
                            split_folder: str = 'split',
@@ -76,7 +76,7 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                         print(f"Warning: Color {color} not found in color2label. Skipping.")
                         continue
 
-                    category_id = color2label[color][2]
+                    category_id = color2FDI[color]
                     if category_id == 0:
                         continue
 
