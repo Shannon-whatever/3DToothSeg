@@ -1,14 +1,15 @@
 import os
 import torch
 import json
-from pathlib import Path
-import PIL as Image
 import numpy as np
-from torchvision.ops import masks_to_boxes
+from pathlib import Path
+from PIL import Image
 from tqdm import tqdm
+from torchvision.ops import masks_to_boxes, box_convert
+from torchvision.utils import draw_bounding_boxes
+from torchvision.transforms.functional import to_pil_image
 
-
-from .utils import FDI2color, color2label
+from utils.color_utils import FDI2color, color2label
 
 def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
                            split_folder: str = 'split',
@@ -18,6 +19,8 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
     
     categories = []
     for fdi_id, (_, tooth_name, _) in FDI2color.items():
+        if fdi_id == 0:
+            continue
         categories.append({
             "id": fdi_id,          
             "name": tooth_name,    
@@ -32,11 +35,13 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         for line in tqdm(file, desc="Processing Patients"):
             line = line.rstrip()
             l_name = line.split('_')[0]
-            l_view = line.split('_')[0]
+            l_view = line.split('_')[1]
 
             render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
             mask_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'mask')
+            bbox_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'bbox')
 
+            Path(bbox_dir).mkdir(parents=True, exist_ok=True)
             if not os.path.exists(render_dir) or not os.path.exists(mask_dir):
                 print(f"Warning: Missing directories for {line}")
                 continue
@@ -53,7 +58,7 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                 image_id = len(images) + 1
                 images.append({
                     "id": image_id,
-                    "file_name": render_files,
+                    "file_name": render_file,
                     "width": width,
                     "height": height
                 })
@@ -62,23 +67,35 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                 unique_colors = np.unique(mask.reshape(-1, 3), axis=0)
                 instance_colors = [tuple(color) for color in unique_colors if tuple(color) in color2label]
 
+                boxes = []
+                colors = []
+                labels = []
+
                 for color in instance_colors:
                     if color not in color2label:
                         print(f"Warning: Color {color} not found in color2label. Skipping.")
                         continue
+
+                    category_id = color2label[color][2]
+                    if category_id == 0:
+                        continue
+
                     binary_mask = (np.all(mask == np.array(color), axis=-1)).astype(np.uint8)
                     binary_mask_tensor = torch.tensor(binary_mask, dtype=torch.uint8).unsqueeze(0)
-                    if binary_mask_tensor.sum() == 0:  
+                    if binary_mask_tensor.sum() == 0:
+                        print(f"Skipping empty mask for color {color}.")
                         continue
                     
                     box = masks_to_boxes(binary_mask_tensor).to(torch.float32)
-                    box[:, 2:] -= box[:, :2]  # Convert to (x_min, y_min, w, h)
-                    box[:, 0::2].clamp_(min=0, max=width)
-                    box[:, 1::2].clamp_(min=0, max=height)
+                    boxes.append(box)
+                    colors.append(tuple(color))
+                    labels.append(color2label[color][1])
 
-                    category_id = color2label[color][2]
+                    box_wh = box_convert(box, in_fmt="xyxy", out_fmt="xywh")
+                    box_wh[:, 0::2].clamp_(min=0, max=width)
+                    box_wh[:, 1::2].clamp_(min=0, max=height)
 
-                    for b in box:
+                    for b in box_wh:
                         annotations.append({
                             "id": annotation_id,
                             "image_id": image_id,
@@ -88,6 +105,22 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                             "iscrowd": 0
                         })
                         annotation_id += 1
+
+                if boxes:
+                    boxes_tensor = torch.cat(boxes, dim=0)
+                    img_tensor = torch.tensor(np.array(img)).permute(2, 0, 1) 
+                    img_with_boxes = draw_bounding_boxes(
+                        img_tensor,
+                        boxes=boxes_tensor,
+                        labels=labels,
+                        colors=[f"rgb({r},{g},{b})" for r, g, b in colors]
+                    )
+                    img_with_boxes_pil = to_pil_image(img_with_boxes)
+                    img_with_boxes_pil.save(os.path.join(bbox_dir, render_file))
+                else:
+                    print(f"No bounding boxes found for {render_file}. Skipping visualization.")
+                    continue
+        
 
     coco_format = {
         "info": {
@@ -118,3 +151,6 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         json.dump(coco_format, json_file, indent=4)
 
     print(f"Annotation JSON saved at {output_path}")
+
+if __name__ == "__main__":
+    create_annotation_json()
