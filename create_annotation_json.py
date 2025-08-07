@@ -1,45 +1,21 @@
 import os
-import cv2
+import torch
+import json
+from pathlib import Path
+import PIL as Image
+import numpy as np
+from torchvision.ops import masks_to_boxes
 from tqdm import tqdm
 
-from .utils import FDI2color
 
-def convert_teeth3ds_to_coco(root: str = '.datasets/teeth3ds', 
-                             processed_folder: str = 'processed', 
-                             mesh_view: list = ['upper', 'lower'], 
-                             total_files: int = 1800,
-                             is_train: bool = True,
-                             train_test_split: int = 1,
-                             output_path: str = '.datasets/teeth3ds'):
-    categories = generate_categories_from_fdi(FDI2color)
+from .utils import FDI2color, color2label
 
-    if train_test_split == 1:
-        split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',
-                                                                                         'testing_upper.txt']
-    elif train_test_split == 2:
-        split_files = ['public-training-set-1.txt', 'public-training-set-2.txt'] if is_train \
-            else ['private-testing-set.txt']
-    elif train_test_split == 0:
-        split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
-    else:
-        raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
+def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
+                           split_folder: str = 'split',
+                           processed_folder: str = 'processed',
+                           txt_file: str = 'training_lower_sample.txt',
+                           output_dir: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds/annotation'):
     
-    images = generate_images_from_teeth3ds(root, processed_folder, split_files, is_train)
-
-    annotations = []
-
-    coco_format = {
-        "images": images,
-        "annotations": annotations,
-        "categories": categories
-    }
-
-
-
-
-
-
-def generate_categories_from_fdi(FDI2color):
     categories = []
     for fdi_id, (_, tooth_name, _) in FDI2color.items():
         categories.append({
@@ -47,32 +23,98 @@ def generate_categories_from_fdi(FDI2color):
             "name": tooth_name,    
             "supercategory": "tooth" if fdi_id != 0 else "gum"  
         })
-    return categories
 
-def generate_images_from_teeth3ds(root, processed_folder, split_files, is_train=True):
     images = []
-    image_id = 1  
+    annotations = []
+    annotation_id = 1
 
-    for f in split_files: 
-        with open(os.path.join(root, "split", f) , 'r') as file:
-            for l in tqdm(file, desc=f"Processing {f}"):
-                l_name, l_view = l.strip().split('_') 
-                render_dir = os.path.join(root, processed_folder, l_view, l_name, "render")
+    with open(os.path.join(root, split_folder, txt_file), 'r') as file:
+        for line in tqdm(file, desc="Processing Patients"):
+            line = line.rstrip()
+            l_name = line.split('_')[0]
+            l_view = line.split('_')[0]
 
-                for img_file in sorted(os.listdir(render_dir)):
-                    if img_file.endswith(".png"):  
-                        img_path = os.path.join(render_dir, img_file)
-                        img = cv2.imread(img_path)
-                        height, width = img.shape[:2]
+            render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
+            mask_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'mask')
 
-                        images.append({
-                            "id": image_id,
-                            "file_name": img_file,
-                            "width": width,
-                            "height": height
+            if not os.path.exists(render_dir) or not os.path.exists(mask_dir):
+                print(f"Warning: Missing directories for {line}")
+                continue
+
+            render_files = sorted(os.listdir(render_dir))
+            mask_files = sorted(os.listdir(mask_dir))
+
+            for render_file, mask_file in zip(render_files, mask_files):
+                render_path = os.path.join(render_dir, render_file)
+                mask_path = os.path.join(mask_dir, mask_file)
+
+                img = Image.open(render_path).convert("RGB")
+                width, height = img.size
+                image_id = len(images) + 1
+                images.append({
+                    "id": image_id,
+                    "file_name": render_files,
+                    "width": width,
+                    "height": height
+                })
+
+                mask = np.array(Image.open(mask_path).convert("RGB"))
+                unique_colors = np.unique(mask.reshape(-1, 3), axis=0)
+                instance_colors = [tuple(color) for color in unique_colors if tuple(color) in color2label]
+
+                for color in instance_colors:
+                    if color not in color2label:
+                        print(f"Warning: Color {color} not found in color2label. Skipping.")
+                        continue
+                    binary_mask = (np.all(mask == np.array(color), axis=-1)).astype(np.uint8)
+                    binary_mask_tensor = torch.tensor(binary_mask, dtype=torch.uint8).unsqueeze(0)
+                    if binary_mask_tensor.sum() == 0:  
+                        continue
+                    
+                    box = masks_to_boxes(binary_mask_tensor).to(torch.float32)
+                    box[:, 2:] -= box[:, :2]  # Convert to (x_min, y_min, w, h)
+                    box[:, 0::2].clamp_(min=0, max=width)
+                    box[:, 1::2].clamp_(min=0, max=height)
+
+                    category_id = color2label[color][2]
+
+                    for b in box:
+                        annotations.append({
+                            "id": annotation_id,
+                            "image_id": image_id,
+                            "category_id": category_id,
+                            "bbox": [int(coord) for coord in b.tolist()],
+                            "area": int(b[2] * b[3]),  # Area = width * height
+                            "iscrowd": 0
                         })
+                        annotation_id += 1
 
-                        image_id += 1  # Increment image ID
+    coco_format = {
+        "info": {
+            "description": "3D Tooth Segmentation Dataset",
+            "url": "https://github.com/Shannon-whatever/3DToothSeg",
+            "version": "1.0",
+            "year": 2025,
+            "contributor": "Chensy",
+            "date_created": "2025-08-07"
+        },
+        "licenses": [
+            {
+                "id": 1,
+                "name": "Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)",
+                "url": "https://creativecommons.org/licenses/by-nc/4.0/"
+            }
+        ],
+        "images": images,
+        "annotations": annotations,
+        "categories": categories
+    }
 
-    return images
-        
+    output_file_name = f"{os.path.splitext(os.path.basename(txt_file))[0]}_annotation.json"
+    output_path = os.path.join(output_dir, output_file_name)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, 'w') as json_file:
+        json.dump(coco_format, json_file, indent=4)
+
+    print(f"Annotation JSON saved at {output_path}")
