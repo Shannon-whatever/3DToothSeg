@@ -7,13 +7,14 @@ from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
 from torchvision.ops import masks_to_boxes, box_convert
+import rfdetr.datasets.transforms as T
 
 
 from utils.color_utils import FDI2color, color2label, color2FDI
 
 
 class Teeth3DSDetection(Dataset):
-    def __init__(self, root, train_test_split, is_train, square_resize, square_resize_div_64):
+    def __init__(self, root, square_resize, square_resize_div_64, transforms, train_test_split = 0, is_train = True):
         self.root = Path(root)
         self.square_resize = square_resize
         self.square_resize_div_64 = square_resize_div_64
@@ -33,6 +34,7 @@ class Teeth3DSDetection(Dataset):
             raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
         
         self._set_images_targets()
+
 
     
     def _set_images_targets(self):
