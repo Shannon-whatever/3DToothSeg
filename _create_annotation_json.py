@@ -10,13 +10,14 @@ from torchvision.ops import masks_to_boxes, box_convert
 from torchvision.utils import draw_bounding_boxes
 from torchvision.transforms.functional import to_pil_image
 
-from utils.color_utils import FDI2color, color2label, color2FDI
+from utils.color_utils import FDI2color, color2label, color2FDI, fdi_to_sequential_id
 
 def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
                            split_folder: str = 'split',
                            processed_folder: str = 'processed',
                            is_train: bool = True,
                            train_test_split: int = 0,
+                           image_set: str = 'train',
                            output_dir: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds/annotation'):
     
     if train_test_split == 1:
@@ -25,7 +26,12 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         split_files = ['public-training-set-1.txt', 'public-training-set-2.txt'] if is_train \
             else ['private-testing-set.txt']
     elif train_test_split == 0:
-        split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
+        if image_set == 'train':
+            split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
+        elif image_set == 'val':
+            split_files = ['validation_lower_sample.txt', 'validation_upper_sample.txt']
+        elif image_set == 'test':
+            split_files = ['testing_lower_sample.txt', 'testing_upper_sample.txt']
     else:
         raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
     
@@ -39,7 +45,7 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
             if fdi_id == 0:
                 continue
             categories.append({
-                "id": fdi_id,          
+                "id": fdi_to_sequential_id[fdi_id],          
                 "name": tooth_name,    
                 "supercategory": "tooth" if fdi_id != 0 else "gum"  
             })
@@ -93,9 +99,10 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                             print(f"Warning: Color {color} not found in color2label. Skipping.")
                             continue
 
-                        category_id = color2FDI[color]
-                        if category_id == 0:
+                        fdi_id = color2FDI[color]    
+                        if fdi_id == 0:
                             continue
+                        category_id = fdi_to_sequential_id[fdi_id]
 
                         binary_mask = (np.all(mask == np.array(color), axis=-1)).astype(np.uint8)
                         binary_mask_tensor = torch.tensor(binary_mask, dtype=torch.uint8).unsqueeze(0)
@@ -155,9 +162,9 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                     "url": "https://creativecommons.org/licenses/by-nc/4.0/"
                 }
             ],
+            "categories": categories,
             "images": images,
             "annotations": annotations,
-            "categories": categories
         }
 
         output_file_name = f"{os.path.splitext(os.path.basename(txt_file))[0]}_annotation.json"
@@ -172,7 +179,8 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create an annotation JSON file.")
     parser.add_argument("--is_train", type=bool, default=True)
+    parser.add_argument("--image_set", type=str, default='train', choices=['train', 'val', 'test'])
     parser.add_argument("--train_test_split", type=int, default=0, choices =[0, 1, 2])
     args = parser.parse_args()
 
-    create_annotation_json(is_train=args.is_train, train_test_split=args.train_test_split)
+    create_annotation_json(is_train=args.is_train, train_test_split=args.train_test_split, image_set=args.image_set)
