@@ -55,14 +55,21 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         annotation_id = 1
 
         with open(os.path.join(root, split_folder, txt_file), 'r') as file:
-            for line in tqdm(file, desc="Processing Patients"):
+            lines = file.readlines()  
+            for line in tqdm(lines, desc="Processing Patients", total=len(lines)):
                 line = line.rstrip()
                 l_name = line.split('_')[0]
                 l_view = line.split('_')[1]
 
-                render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
-                mask_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'mask')
-                bbox_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'bbox')
+                if train_test_split == 0:
+                    render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
+                    mask_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'mask')
+                    bbox_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'bbox')
+                else:
+                    render_dir = os.path.join(root, processed_folder, l_view, l_name, 'render')
+                    mask_dir = os.path.join(root, processed_folder, l_view, l_name, 'mask')
+                    bbox_dir = os.path.join(root, processed_folder, l_view, l_name, 'bbox')
+
 
                 Path(bbox_dir).mkdir(parents=True, exist_ok=True)
                 if not os.path.exists(render_dir) or not os.path.exists(mask_dir):
@@ -96,7 +103,6 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
 
                     for color in instance_colors:
                         if color not in color2label:
-                            print(f"Warning: Color {color} not found in color2label. Skipping.")
                             continue
 
                         fdi_id = color2FDI[color]    
@@ -107,7 +113,6 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                         binary_mask = (np.all(mask == np.array(color), axis=-1)).astype(np.uint8)
                         binary_mask_tensor = torch.tensor(binary_mask, dtype=torch.uint8).unsqueeze(0)
                         if binary_mask_tensor.sum() == 0:
-                            print(f"Skipping empty mask for color {color}.")
                             continue
                         
                         box = masks_to_boxes(binary_mask_tensor).to(torch.float32)
