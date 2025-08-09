@@ -3,7 +3,7 @@ import torch
 import argparse
 import numpy as np
 from tqdm import tqdm
-import rearrange
+from einops import rearrange
 from torch.utils.data import DataLoader
 
 
