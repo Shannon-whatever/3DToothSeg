@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from plyfile import PlyData
+import os
+from PIL import Image
 
 from utils.color_utils import color2label
 
@@ -99,6 +101,23 @@ def output_pred_ply(pred_mask, cell_coords, path, point_coords=None, face_info=N
         f.write(cell_info)
 
     return
+
+
+def output_pred_images(pred_rgb, gt_rgb, save_dir, file_name):
+    """
+    pred_rgb: (view, h, w, 3) uint8 tensor
+    """
+
+    view = pred_rgb.shape[0]
+
+    for v in range(view):
+        pred_img = pred_rgb[v]  # (h, w, 3)
+        pred_img = Image.fromarray(pred_img)
+        pred_img.save(os.path.join(save_dir, 'pred_mask', f"{file_name}_{v}.png"))
+
+        gt_img = gt_rgb[v]  # (h, w, 3)
+        gt_img = Image.fromarray(gt_img)
+        gt_img.save(os.path.join(save_dir, 'gt_mask', f"{file_name}_{v}.png"))
 
 
 def load_color_from_ply(file_path):
@@ -201,7 +220,7 @@ def rgb_mask_to_label(mask_tensor, num_classes=17):
 
 
 
-def save_metrics_to_txt(filepath, miou, per_class_miou, merge_iou, 
+def save_metrics_to_txt(filepath, num_classes, miou, per_class_miou, merge_iou, 
                         merge_pairs=[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)]):
     """
     Save evaluation metrics to a plain text (.txt) file.
@@ -214,7 +233,7 @@ def save_metrics_to_txt(filepath, miou, per_class_miou, merge_iou,
         class_names: Optional[List[str]], names for each class
         merge_names: Optional[List[str]], names for each merge pair
     """
-    class_names = [f"Class {i}" for i in range(17)]
+    class_names = [f"Class {i}" for i in range(num_classes)]
     merge_names = [f"T{a}/T{b}" for a, b in merge_pairs]
     with open(filepath, "w") as f:
         f.write("==== Segmentation Evaluation Metrics ====\n\n")
@@ -226,7 +245,9 @@ def save_metrics_to_txt(filepath, miou, per_class_miou, merge_iou,
             f.write(f"  {name:<10s}: {iou:.4f}\n")
         f.write("\n")
 
-        f.write("Merged-Class IoU:\n")
-        for i, iou in enumerate(merge_iou):
-            name = merge_names[i] if merge_names else f"Pair {i}"
-            f.write(f"  {name:<10s}: {iou:.4f}\n")
+        if merge_iou is not None:
+            f.write("Merged-Class IoU:\n")
+            for i, iou in enumerate(merge_iou):
+                name = merge_names[i] if merge_names else f"Pair {i}"
+                f.write(f"  {name:<10s}: {iou:.4f}\n")
+

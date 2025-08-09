@@ -62,6 +62,19 @@ def calculate_miou(pred_labels, gt_labels, n_class=17, ignore_index=-1,
     merged_ious = torch.stack(merged_ious, dim=0)  # (num_pairs,)
     return miou, per_class_iou, merged_ious
 
+def calculate_miou_2d(pred_labels, gt_labels, n_class=17+1, ignore_index=-1):
+    device = gt_labels.device
+    miou_metric = tm.JaccardIndex(task="multiclass", num_classes=n_class, ignore_index=ignore_index)
+
+    # 计算 mIoU
+    miou = miou_metric(pred_labels, gt_labels)
+
+    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None, ignore_index=ignore_index).to(device)
+    per_class_iou = cal_iou(pred_labels, gt_labels) # (C, )
+
+    return miou, per_class_iou
+
+
 
 def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
     pred_labels = torch.tensor(pred_labels)
