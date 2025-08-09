@@ -64,7 +64,7 @@ def calculate_miou(pred_labels, gt_labels, n_class=17, ignore_index=-1,
 
 def calculate_miou_2d(pred_labels, gt_labels, n_class=17+1, ignore_index=-1):
     device = gt_labels.device
-    miou_metric = tm.JaccardIndex(task="multiclass", num_classes=n_class, ignore_index=ignore_index)
+    miou_metric = tm.JaccardIndex(task="multiclass", num_classes=n_class, ignore_index=ignore_index).to(device)
 
     # 计算 mIoU
     miou = miou_metric(pred_labels, gt_labels)

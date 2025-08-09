@@ -111,12 +111,9 @@ def predict(dataloader, model, args, save_result=False):
                         output_pred_ply(pred_mask, None, save_path_3d, point_coords[i], face_info[i])
                         output_pred_images(pred_mask_2d, gt_mask_2d, save_dir, file_name_i)
 
-
-                    print(f"Predict end, visual result saved at {args.save_predict_mask_dir}")
-
-                    # 2d visualization on masks
-                
                 loop_val.set_postfix(miou=miou_batch)
+            
+            print(f"Predict end, visual result saved at {args.save_predict_mask_dir}")
             
             # 3d mIoU
             miou = torch.stack(miou).mean().item()
@@ -129,8 +126,9 @@ def predict(dataloader, model, args, save_result=False):
 
 
             # save metrics
+            save_name = os.path.splitext(os.path.basename(args.provide_files))[0]
             save_metrics_to_txt(
-                filepath=os.path.join(args.save_dir, f"metrics_{args.provide_files}_miou{miou:.3f}.txt"),
+                filepath=os.path.join(args.save_predict_mask_dir, f"metrics_{save_name}_miou{miou:.3f}.txt"),
                 num_classes=17,
                 miou=miou,
                 per_class_miou=per_class_iou.cpu().numpy(),
@@ -138,14 +136,14 @@ def predict(dataloader, model, args, save_result=False):
                 )
             
             save_metrics_to_txt(
-                filepath=os.path.join(args.save_dir, f"metrics_2d_{args.provide_files}_miou{miou_2d:.3f}.txt"),
+                filepath=os.path.join(args.save_predict_mask_dir, f"metrics_2d_{save_name}_miou{miou_2d:.3f}.txt"),
                 num_classes=18,
                 miou=miou_2d,
                 per_class_miou=per_class_iou_2d.cpu().numpy(),
                 merge_iou=None,
                 )
             
-            print(f"Evaluation mIoU: {miou:.4f} for {args.provide_files}. Detail metrics saved to {args.save_dir}")
+            print(f"Evaluation mIoU: {miou:.4f} for {save_name}. Detail metrics saved to {args.save_dir}")
 
 
 def get_args():

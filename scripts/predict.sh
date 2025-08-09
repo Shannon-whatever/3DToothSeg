@@ -8,11 +8,11 @@ python predict.py \
     --data_dir .datasets/teeth3ds \
     --num_points 16000 \
     --sample_points 16000 \
-    --sample_views 4 \
+    --sample_views 10 \
     --batch_size 4 \
-    --save_dir exp/baseline_test \
+    --save_dir exp/baseline_reproduce \
     --device cuda:0 \
     --num_workers 4 \
-    --provide_files abnormal_test.txt \
-    --load_ckp exp/baseline_reproduce/checkpoint.pth \
+    --provide_files exp/baseline_reproduce/tyoical_examples.txt \
+    --load_ckp exp/baseline_reproduce/toothseg_epoch100_miou0.938.pth \
 

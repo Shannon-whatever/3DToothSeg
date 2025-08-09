@@ -113,11 +113,15 @@ def output_pred_images(pred_rgb, gt_rgb, save_dir, file_name):
     for v in range(view):
         pred_img = pred_rgb[v]  # (h, w, 3)
         pred_img = Image.fromarray(pred_img)
-        pred_img.save(os.path.join(save_dir, 'pred_mask', f"{file_name}_{v}.png"))
+        pred_img_save_dir = os.path.join(save_dir, 'pred_mask')
+        os.makedirs(pred_img_save_dir, exist_ok=True)
+        pred_img.save(os.path.join(pred_img_save_dir, f"{file_name}_{v}.png"))
 
         gt_img = gt_rgb[v]  # (h, w, 3)
         gt_img = Image.fromarray(gt_img)
-        gt_img.save(os.path.join(save_dir, 'gt_mask', f"{file_name}_{v}.png"))
+        gt_img_save_dir = os.path.join(save_dir, 'gt_mask')
+        os.makedirs(gt_img_save_dir, exist_ok=True)
+        gt_img.save(os.path.join(gt_img_save_dir, f"{file_name}_{v}.png"))
 
 
 def load_color_from_ply(file_path):
