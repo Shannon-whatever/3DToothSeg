@@ -6,19 +6,16 @@ from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
 import argparse
+import time
 from torchvision.ops import masks_to_boxes, box_convert
 from torchvision.utils import draw_bounding_boxes
 from torchvision.transforms.functional import to_pil_image
 
 from utils.color_utils import FDI2color, color2label, color2FDI, fdi_to_sequential_id
 
-def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
-                           split_folder: str = 'split',
-                           processed_folder: str = 'processed',
-                           is_train: bool = True,
-                           train_test_split: int = 0,
-                           image_set: str = 'train',
-                           output_dir: str = '/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds/annotation'):
+def create_annotation_json(root, split_folder, processed_folder,
+                           is_train=True, train_test_split=0,
+                           image_set='train', output_dir=None):
     
     if train_test_split == 1:
         split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',                                                                           'testing_upper.txt']
@@ -35,20 +32,20 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
     else:
         raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
     
+    categories = []
+    for fdi_id, (_, tooth_name, _) in FDI2color.items():
+        if fdi_id == 0:
+            continue
+        categories.append({
+            "id": fdi_to_sequential_id[fdi_id],          
+            "name": tooth_name,    
+            "supercategory": "tooth" if fdi_id != 0 else "gum"  
+        })
+    
     for split_file in split_files:
         txt_file = os.path.join(root, split_folder, split_file)
         if not os.path.exists(txt_file):
             raise FileNotFoundError(f"Split file {txt_file} does not exist.")
-
-        categories = []
-        for fdi_id, (_, tooth_name, _) in FDI2color.items():
-            if fdi_id == 0:
-                continue
-            categories.append({
-                "id": fdi_to_sequential_id[fdi_id],          
-                "name": tooth_name,    
-                "supercategory": "tooth" if fdi_id != 0 else "gum"  
-            })
 
         images = []
         annotations = []
@@ -57,6 +54,7 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         with open(os.path.join(root, split_folder, txt_file), 'r') as file:
             lines = file.readlines()  
             for line in tqdm(lines, desc="Processing Patients", total=len(lines)):
+                patient_start_time = time.time()
                 line = line.rstrip()
                 l_name = line.split('_')[0]
                 l_view = line.split('_')[1]
@@ -64,18 +62,17 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                 if train_test_split == 0:
                     render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
                     mask_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'mask')
-                    bbox_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'bbox')
+                    # bbox_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'bbox')
                 else:
                     render_dir = os.path.join(root, processed_folder, l_view, l_name, 'render')
                     mask_dir = os.path.join(root, processed_folder, l_view, l_name, 'mask')
-                    bbox_dir = os.path.join(root, processed_folder, l_view, l_name, 'bbox')
+                    # bbox_dir = os.path.join(root, processed_folder, l_view, l_name, 'bbox')
 
-
-                Path(bbox_dir).mkdir(parents=True, exist_ok=True)
+                # Path(bbox_dir).mkdir(parents=True, exist_ok=True)
                 if not os.path.exists(render_dir) or not os.path.exists(mask_dir):
                     print(f"Warning: Missing directories for {line}")
                     continue
-
+                
                 render_files = sorted(os.listdir(render_dir))
                 mask_files = sorted(os.listdir(mask_dir))
 
@@ -135,21 +132,22 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
                             })
                             annotation_id += 1
 
-                    if boxes:
-                        boxes_tensor = torch.cat(boxes, dim=0)
-                        img_tensor = torch.tensor(np.array(img)).permute(2, 0, 1) 
-                        img_with_boxes = draw_bounding_boxes(
-                            img_tensor,
-                            boxes=boxes_tensor,
-                            labels=labels,
-                            colors=[f"rgb({r},{g},{b})" for r, g, b in colors]
-                        )
-                        img_with_boxes_pil = to_pil_image(img_with_boxes)
-                        img_with_boxes_pil.save(os.path.join(bbox_dir, render_file))
-                    else:
-                        print(f"No bounding boxes found for {render_file}. Skipping visualization.")
-                        continue
-            
+                    # if boxes:
+                        # boxes_tensor = torch.cat(boxes, dim=0)
+                        # img_tensor = torch.tensor(np.array(img)).permute(2, 0, 1) 
+                        # img_with_boxes = draw_bounding_boxes(
+                            # img_tensor,
+                            # boxes=boxes_tensor,
+                            # labels=labels,
+                            # colors=[f"rgb({r},{g},{b})" for r, g, b in colors]
+                        # )
+                        # img_with_boxes_pil = to_pil_image(img_with_boxes)
+                        # img_with_boxes_pil.save(os.path.join(bbox_dir, render_file))
+                    # else:
+                        # print(f"No bounding boxes found for {render_file}. Skipping visualization.")
+                        # continue
+                patient_end_time = time.time()
+                print(f"Patient {l_name} total time: {patient_end_time - patient_start_time:.2f}s ")
 
         coco_format = {
             "info": {
@@ -182,10 +180,18 @@ def create_annotation_json(root: str = '/home/zychen/Documents/Project_shno/3DTo
         print(f"Annotation JSON saved at {output_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Create an annotation JSON file.")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--is_train", type=bool, default=True)
     parser.add_argument("--image_set", type=str, default='train', choices=['train', 'val', 'test'])
-    parser.add_argument("--train_test_split", type=int, default=0, choices =[0, 1, 2])
+    parser.add_argument("--train_test_split", type=int, default=0, choices=[0, 1, 2])
     args = parser.parse_args()
 
-    create_annotation_json(is_train=args.is_train, train_test_split=args.train_test_split, image_set=args.image_set)
+    create_annotation_json(
+        is_train=args.is_train,
+        train_test_split=args.train_test_split,
+        image_set=args.image_set,
+        root='/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
+        split_folder="split",
+        processed_folder="processed",
+        output_dir='/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds/annotation'
+    )
