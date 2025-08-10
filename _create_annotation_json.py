@@ -14,9 +14,11 @@ from torchvision.ops import masks_to_boxes, box_convert
 from utils.color_utils import FDI2color, color2label, color2FDI, fdi_to_sequential_id
 
 def create_annotation_json(root, split_folder, processed_folder,
-                           is_train=True, train_test_split=0,
+                           is_train=False, train_test_split=0,
                            output_dir=None):
-    
+
+    print(f"is_train = {is_train}")
+
     if train_test_split == 1:
         split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',                                                                           'testing_upper.txt']
     elif train_test_split == 2:
@@ -27,6 +29,7 @@ def create_annotation_json(root, split_folder, processed_folder,
             else ['testing_lower_sample.txt', 'testing_upper_sample.txt']
     else:
         raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
+    print(f"processing {split_files}")
     
     categories = []
     for fdi_id, (_, tooth_name, _) in FDI2color.items():
@@ -178,7 +181,7 @@ def create_annotation_json(root, split_folder, processed_folder,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_train", type=bool, default=True)
+    parser.add_argument("--is_train", action="store_true")
     parser.add_argument("--train_test_split", type=int, default=0, choices=[0, 1, 2])
     args = parser.parse_args()
 
