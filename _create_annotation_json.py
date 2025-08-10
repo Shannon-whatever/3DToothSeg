@@ -6,16 +6,16 @@ from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
 import argparse
-import time
+# import time
 from torchvision.ops import masks_to_boxes, box_convert
-from torchvision.utils import draw_bounding_boxes
-from torchvision.transforms.functional import to_pil_image
+# from torchvision.utils import draw_bounding_boxes
+# from torchvision.transforms.functional import to_pil_image
 
 from utils.color_utils import FDI2color, color2label, color2FDI, fdi_to_sequential_id
 
 def create_annotation_json(root, split_folder, processed_folder,
                            is_train=True, train_test_split=0,
-                           image_set='train', output_dir=None):
+                           output_dir=None):
     
     if train_test_split == 1:
         split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',                                                                           'testing_upper.txt']
@@ -23,12 +23,8 @@ def create_annotation_json(root, split_folder, processed_folder,
         split_files = ['public-training-set-1.txt', 'public-training-set-2.txt'] if is_train \
             else ['private-testing-set.txt']
     elif train_test_split == 0:
-        if image_set == 'train':
-            split_files = ['training_lower_sample.txt', 'training_upper_sample.txt']
-        elif image_set == 'val':
-            split_files = ['validation_lower_sample.txt', 'validation_upper_sample.txt']
-        elif image_set == 'test':
-            split_files = ['testing_lower_sample.txt', 'testing_upper_sample.txt']
+        split_files = ['training_lower_sample.txt', 'training_upper_sample.txt'] if is_train \
+            else ['testing_lower_sample.txt', 'testing_upper_sample.txt']
     else:
         raise ValueError(f'train_test_split should be 0, 1 or 2. not {train_test_split}')
     
@@ -54,7 +50,7 @@ def create_annotation_json(root, split_folder, processed_folder,
         with open(os.path.join(root, split_folder, txt_file), 'r') as file:
             lines = file.readlines()  
             for line in tqdm(lines, desc="Processing Patients", total=len(lines)):
-                patient_start_time = time.time()
+                # patient_start_time = time.time()
                 line = line.rstrip()
                 l_name = line.split('_')[0]
                 l_view = line.split('_')[1]
@@ -76,7 +72,8 @@ def create_annotation_json(root, split_folder, processed_folder,
                 render_files = sorted(os.listdir(render_dir))
                 mask_files = sorted(os.listdir(mask_dir))
 
-                for render_file, mask_file in zip(render_files, mask_files):
+                # Only process the first 5 imgs
+                for render_file, mask_file in list(zip(render_files, mask_files))[:5]:
                     render_path = os.path.join(render_dir, render_file)
                     mask_path = os.path.join(mask_dir, mask_file)
 
@@ -146,8 +143,8 @@ def create_annotation_json(root, split_folder, processed_folder,
                     # else:
                         # print(f"No bounding boxes found for {render_file}. Skipping visualization.")
                         # continue
-                patient_end_time = time.time()
-                print(f"Patient {l_name} total time: {patient_end_time - patient_start_time:.2f}s ")
+                # patient_end_time = time.time()
+                # print(f"Patient {l_name} total time: {patient_end_time - patient_start_time:.2f}s ")
 
         coco_format = {
             "info": {
@@ -182,14 +179,12 @@ def create_annotation_json(root, split_folder, processed_folder,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_train", type=bool, default=True)
-    parser.add_argument("--image_set", type=str, default='train', choices=['train', 'val', 'test'])
     parser.add_argument("--train_test_split", type=int, default=0, choices=[0, 1, 2])
     args = parser.parse_args()
 
     create_annotation_json(
         is_train=args.is_train,
         train_test_split=args.train_test_split,
-        image_set=args.image_set,
         root='/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
         split_folder="split",
         processed_folder="processed",
