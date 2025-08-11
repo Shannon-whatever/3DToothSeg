@@ -11,10 +11,11 @@ from torchvision.ops import masks_to_boxes, box_convert
 # from torchvision.utils import draw_bounding_boxes
 # from torchvision.transforms.functional import to_pil_image
 
-from utils.color_utils import FDI2color, color2label, color2FDI, fdi_to_sequential_id
+from utils.color_utils import Seq2Color, Color2Seq
 
 def create_annotation_json(root, split_folder, processed_folder,
-                           is_train=False, train_test_split=0,
+                           train_test_split=0,
+                           is_train=False,
                            output_dir=None):
 
     print(f"is_train = {is_train}")
@@ -32,13 +33,11 @@ def create_annotation_json(root, split_folder, processed_folder,
     print(f"processing {split_files}")
     
     categories = []
-    for fdi_id, (_, tooth_name, _) in FDI2color.items():
-        if fdi_id == 0:
-            continue
+    for seq_id, (_, tooth_name, _) in Seq2Color.items():
         categories.append({
-            "id": fdi_to_sequential_id[fdi_id],          
-            "name": tooth_name,    
-            "supercategory": "tooth" if fdi_id != 0 else "gum"  
+            "id": seq_id,
+            "name": tooth_name,
+            "supercategory": "tooth" if seq_id != 0 else "gum"
         })
     
     for split_file in split_files:
@@ -92,20 +91,16 @@ def create_annotation_json(root, split_folder, processed_folder,
 
                     mask = np.array(Image.open(mask_path).convert("RGB"))
                     unique_colors = np.unique(mask.reshape(-1, 3), axis=0)
-                    instance_colors = [tuple(color) for color in unique_colors if tuple(color) in color2label]
+                    instance_colors = [tuple(color) for color in unique_colors if tuple(color) in Color2Seq]
 
                     boxes = []
                     colors = []
                     labels = []
 
                     for color in instance_colors:
-                        if color not in color2label:
+                        (category_id, label) = Color2Seq[color]
+                        if category_id == 0:
                             continue
-
-                        fdi_id = color2FDI[color]    
-                        if fdi_id == 0:
-                            continue
-                        category_id = fdi_to_sequential_id[fdi_id]
 
                         binary_mask = (np.all(mask == np.array(color), axis=-1)).astype(np.uint8)
                         binary_mask_tensor = torch.tensor(binary_mask, dtype=torch.uint8).unsqueeze(0)
@@ -115,7 +110,7 @@ def create_annotation_json(root, split_folder, processed_folder,
                         box = masks_to_boxes(binary_mask_tensor).to(torch.float32)
                         boxes.append(box)
                         colors.append(tuple(color))
-                        labels.append(color2label[color][1])
+                        labels.append(label)
 
                         box_wh = box_convert(box, in_fmt="xyxy", out_fmt="xywh")
                         box_wh[:, 0::2].clamp_(min=0, max=width)
