@@ -53,6 +53,8 @@ class Teeth3DSDataset(Dataset):
         std = [0.229, 0.224, 0.225]
         std = [item * value_scale for item in std]
 
+        self.is_train = is_train
+
         
         if is_train:
             self.point_transform = transforms.Compose(
@@ -331,9 +333,12 @@ class Teeth3DSDataset(Dataset):
         image_path_ls = sorted(glob(os.path.join(file_path, 'render', '*.png')), key=self.extract_view_idx) 
         label_path_ls = sorted(glob(os.path.join(file_path, 'mask', '*.png')), key=self.extract_view_idx)
 
-         # 随机采样 a 个 index（确保顺序一致）
+         # 随机采样 sample views during training
         total_views = len(image_path_ls)
-        sample_views = sorted(random.sample(range(total_views), self.sample_views))
+        if self.is_train:
+            sample_views = sorted(random.sample(range(total_views), self.sample_views))
+        else:
+            sample_views = list(range(total_views))[:48]
 
         renders, masks = [], []
         for i in sample_views:
