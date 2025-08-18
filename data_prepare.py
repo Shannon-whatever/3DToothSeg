@@ -104,5 +104,5 @@ class DatasetPrepare():
 
 if __name__ == '__main__':
 
-    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds', processed_folder='processed', render_step=(6, 9))
+    dataset_prepare = DatasetPrepare(root='.datasets/teeth3ds', processed_folder='processed', render_size=(1024, 1024), render_step=(9, 12))
     dataset_prepare.prepare_gt_ply()

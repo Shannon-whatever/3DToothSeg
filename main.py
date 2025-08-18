@@ -14,7 +14,7 @@ from models.main_network import ToothSegNet
 from dataset.teeth3ds import Teeth3DSDataset
 from utils.other_utils import output_pred_ply, save_metrics_to_txt
 from utils.color_utils import label2color_lower, label2color_upper
-from utils.metric_utils import calculate_miou
+from utils.metric_utils import calculate_miou, calculate_biou
 from utils.dataset_utils import custom_collate_fn
 
 
@@ -85,6 +85,7 @@ class ToothSegmentationPipeline:
             for batch_idx, batch_data in enumerate(loop):
                 pointcloud = batch_data['pointclouds'].to(self.device)
                 labels = batch_data['labels'].to(self.device)
+                boundary_labels = batch_data['boundary_labels'].to(self.device)
                 renders = batch_data['renders'].to(self.device)
                 masks = batch_data['masks'].to(self.device)
                 cameras_Rt = batch_data['cameras_Rt'].to(self.device)
@@ -92,16 +93,17 @@ class ToothSegmentationPipeline:
 
                 self.optimizer.zero_grad()
 
-                predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux = self.model(pointcloud, renders, cameras_Rt, cameras_K)
+                predict_pc_labels, predict_pc_boundary_labels, predict_2d_masks, predict_2d_aux, cbl_loss_aux = self.model(pointcloud, renders, cameras_Rt, cameras_K)
                 
                 # calculate losses
                 loss_3d = self.criterion_ce(predict_pc_labels, labels)
+                loss_3d_boundary = self.criterion_ce(predict_pc_boundary_labels, boundary_labels)
 
                 masks = rearrange(masks, 'b nv h w -> (b nv) h w') # (B, N_v, H, W) -> (B*N_v, H, W)
                 loss_2d = self.criterion_ce(predict_2d_masks, masks) + self.criterion_ce(predict_2d_aux, masks)
 
                 loss_cbl = self.criterion_cbl(cbl_loss_aux, labels.view(-1))
-                loss = loss_2d + loss_3d + loss_cbl
+                loss = loss_2d + loss_3d + loss_3d_boundary + loss_cbl
 
 
                 loss.backward()
@@ -114,6 +116,7 @@ class ToothSegmentationPipeline:
                     self.logger.log({
                         "batch_loss": loss.item(),
                         "loss_3d": loss_3d.item(),
+                        "loss_3d_boundary": loss_3d_boundary.item(),
                         "loss_2d": loss_2d.item(),
                         "loss_cbl": loss_cbl.item(),
                         "step": epoch * len(self.train_dataloader) + batch_idx
@@ -150,6 +153,7 @@ class ToothSegmentationPipeline:
          for label in range(0, 17)], dtype=np.uint8)
         
         miou = []
+        biou = []
         per_class_iou = []
         merge_iou = []
 
@@ -157,20 +161,19 @@ class ToothSegmentationPipeline:
         with torch.no_grad():
             loop_val = tqdm(self.test_dataloader, desc=f"Validating", leave=False)
             for batch_idx, batch_data in enumerate(loop_val):
-                pointcloud = batch_data['pointclouds']
+                pointcloud = batch_data['pointclouds'].to(self.device)
                 point_coords = batch_data['point_coords']
                 face_info = batch_data['face_infos']
                 file_name = batch_data['file_names']
-                labels = batch_data['labels']
+                labels = batch_data['labels'].to(self.device)
+                boundary_labels = batch_data['boundary_labels'].to(self.device)
 
                 renders = batch_data['renders'].to(self.device)
                 cameras_Rt = batch_data['cameras_Rt'].to(self.device)
                 cameras_K = batch_data['cameras_K'].to(self.device)
 
 
-                pointcloud = pointcloud.to(self.device)
-                labels = labels.to(self.device)
-                _, _, point_seg_result, _ = self.model(pointcloud, renders, cameras_Rt, cameras_K) # (B, num_classes, N_pc)
+                point_seg_result, point_seg_boundary_result, _, _, _ = self.model(pointcloud, renders, cameras_Rt, cameras_K) # point_seg_result: (B, num_classes, N_pc)
                 # pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
                 # _, pred_classes = torch.max(pred_softmax, dim=1) # (B, N_pc)
 
@@ -178,10 +181,15 @@ class ToothSegmentationPipeline:
                 pred_classes = point_seg_result.argmax(dim=1)  # (B, N_pc)
                 pred_classes[pred_classes == 17] = 0
                 pred_classes[pred_classes == 18] = 0
+
+                pred_boundary = point_seg_boundary_result.argmax(dim=1)
                 
                 miou_batch, per_class_iou_batch, merge_iou_batch = calculate_miou(
                     pred_classes, labels, n_class=17)
+                biou_batch = calculate_biou(pred_boundary, boundary_labels, n_class=2)
+
                 miou.append(miou_batch)
+                biou.append(biou_batch)
                 per_class_iou.append(per_class_iou_batch)
                 merge_iou.append(merge_iou_batch)
 
@@ -205,8 +213,8 @@ class ToothSegmentationPipeline:
                 loop_val.set_postfix(miou=miou_batch)
             
 
-            miou = torch.stack(miou)
-            miou = miou.mean().item()
+            miou = torch.stack(miou).mean().item()
+            biou = torch.stack(biou).mean().item()
 
             per_class_iou = torch.stack(per_class_iou).mean(dim=0) # (C, )
             merge_iou = torch.stack(merge_iou).mean(dim=0) # (num_pairs, )
@@ -235,6 +243,7 @@ class ToothSegmentationPipeline:
                     save_metrics_to_txt(
                         filepath=os.path.join(self.args.save_dir, f"metrics_result_epoch{current_epoch+1}_miou{miou:.3f}.txt"),
                         miou=miou,
+                        biou=biou,
                         per_class_miou=per_class_iou.cpu().numpy(),
                         merge_iou=merge_iou.cpu().numpy(),
                         )

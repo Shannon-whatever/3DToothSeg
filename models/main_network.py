@@ -249,36 +249,36 @@ class ToothSegNet(nn.Module):
         return labels_final.unsqueeze(-1)  # (B, N_pc, 1)
     
 
-    def batched_forward(self, inputs, batch_size=2):
-        """
-        Run a model on inputs in small batches to avoid OOM.
-        Args:
-            model: nn.Module
-            inputs: Tensor of shape (N, C, H, W)
-            batch_size: int
-        Returns:
-            outputs: list of model outputs for each batch, concatenated
-        """
-        outputs1, outputs2, outputs3 = [], [], []
-        N = inputs.shape[0]
-        for start in range(0, N, batch_size):
-            end = min(start + batch_size, N)
-            batch = inputs[start:end]  # (B', C, H, W)
-            out1, out2, out3 = self.seg_model_2d(batch)
-            outputs1.append(out1)
-            if out2 is not None:
-                outputs2.append(out2)
-            else:
-                outputs2 = None
-            if out3 is not None:
-                outputs3.append(out3)
-            else:
-                outputs3 = None
-        return (
-            torch.cat(outputs1, dim=0),
-            torch.cat(outputs2, dim=0) if outputs2 is not None else None,
-            torch.cat(outputs3, dim=0) if outputs3 is not None else None
-        )
+    # def batched_forward(self, inputs, batch_size=2):
+    #     """
+    #     Run a model on inputs in small batches to avoid OOM.
+    #     Args:
+    #         model: nn.Module
+    #         inputs: Tensor of shape (N, C, H, W)
+    #         batch_size: int
+    #     Returns:
+    #         outputs: list of model outputs for each batch, concatenated
+    #     """
+    #     outputs1, outputs2, outputs3 = [], [], []
+    #     N = inputs.shape[0]
+    #     for start in range(0, N, batch_size):
+    #         end = min(start + batch_size, N)
+    #         batch = inputs[start:end]  # (B', C, H, W)
+    #         out1, out2, out3 = self.seg_model_2d(batch)
+    #         outputs1.append(out1)
+    #         if out2 is not None:
+    #             outputs2.append(out2)
+    #         else:
+    #             outputs2 = None
+    #         if out3 is not None:
+    #             outputs3.append(out3)
+    #         else:
+    #             outputs3 = None
+    #     return (
+    #         torch.cat(outputs1, dim=0),
+    #         torch.cat(outputs2, dim=0) if outputs2 is not None else None,
+    #         torch.cat(outputs3, dim=0) if outputs3 is not None else None
+    #     )
 
     def forward(self, pointcloud, renders=None, cameras_Rt=None, cameras_K=None):
 
@@ -298,13 +298,13 @@ class ToothSegNet(nn.Module):
 
             # 只取标准化后的点云坐标和法向量
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
-            predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
+            predict_pc_labels, predict_pc_boundary_labels, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
             
-            return predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux
+            return predict_pc_labels, predict_pc_boundary_labels, predict_2d_masks, predict_2d_aux, cbl_loss_aux
         
         else:
             
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
             predict_pc_labels, _ = self.seg_model_3d(pc)
 
-            return None, None, predict_pc_labels, None
+            return predict_pc_labels, None, None, None, None
