@@ -3,6 +3,7 @@ import numpy as np
 from plyfile import PlyData
 import os
 from PIL import Image
+from matplotlib import pyplot as plt
 
 from utils.color_utils import color2label
 
@@ -110,18 +111,48 @@ def output_pred_images(pred_rgb, gt_rgb, save_dir, file_name):
 
     view = pred_rgb.shape[0]
 
-    for v in range(view):
-        pred_img = pred_rgb[v]  # (h, w, 3)
-        pred_img = Image.fromarray(pred_img)
-        pred_img_save_dir = os.path.join(save_dir, 'pred_mask')
-        os.makedirs(pred_img_save_dir, exist_ok=True)
-        pred_img.save(os.path.join(pred_img_save_dir, f"{file_name}_{v}.png"))
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
 
-        gt_img = gt_rgb[v]  # (h, w, 3)
-        gt_img = Image.fromarray(gt_img)
-        gt_img_save_dir = os.path.join(save_dir, 'gt_mask')
-        os.makedirs(gt_img_save_dir, exist_ok=True)
-        gt_img.save(os.path.join(gt_img_save_dir, f"{file_name}_{v}.png"))
+    fig, axes = plt.subplots(2, view, figsize=(view*3, 6))  # 每列一个 view
+    if view == 1:
+        axes = np.expand_dims(axes, axis=1)  # 保证 axes 有 shape (2, view)
+
+    for v in range(view):
+        axes[0, v].imshow(gt_rgb[v])
+        axes[0, v].axis('off')
+        if v == 0:
+            axes[0, v].set_ylabel("GT", fontsize=12)
+
+        axes[1, v].imshow(pred_rgb[v])
+        axes[1, v].axis('off')
+        if v == 0:
+            axes[1, v].set_ylabel("Pred", fontsize=12)
+
+        axes[0, v].set_title(f"View {v}", fontsize=12)
+        
+    # # 行标签
+    # fig.text(0.02, 0.75, "GT", fontsize=14, rotation=90, va='center')
+    # fig.text(0.02, 0.25, "Pred", fontsize=14, rotation=90, va='center')
+
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, f"{file_name}_2d.png")
+    plt.savefig(save_path)
+    plt.close()
+
+
+    # for v in range(view):
+    #     pred_img = pred_rgb[v]  # (h, w, 3)
+    #     pred_img = Image.fromarray(pred_img)
+    #     pred_img_save_dir = os.path.join(save_dir, 'pred_mask')
+    #     os.makedirs(pred_img_save_dir, exist_ok=True)
+    #     pred_img.save(os.path.join(pred_img_save_dir, f"{file_name}_{v}.png"))
+
+    #     gt_img = gt_rgb[v]  # (h, w, 3)
+    #     gt_img = Image.fromarray(gt_img)
+    #     gt_img_save_dir = os.path.join(save_dir, 'gt_mask')
+    #     os.makedirs(gt_img_save_dir, exist_ok=True)
+    #     gt_img.save(os.path.join(gt_img_save_dir, f"{file_name}_{v}.png"))
 
 
 def load_color_from_ply(file_path):

@@ -92,6 +92,11 @@ def predict(dataloader, model, args, save_result=False):
                     masks = masks.cpu().numpy().astype(np.uint8)
                     masks = masks.reshape(bs, -1, *masks.shape[1:]) # (B, N_v, H, W)
 
+                    # sample 5 views every 8 steps from masks and pred_classes_2d for visualization
+                    sampled_indices = np.linspace(0, 40, 5, dtype=int)
+                    pred_classes_2d_sampled = pred_classes_2d[:, sampled_indices, ...]
+                    masks_sampled = masks[:, sampled_indices, ...]
+
                     for i in range(bs):
                         file_name_i = file_name[i]
                         file_view = file_name_i.split('_')[1]
@@ -101,19 +106,19 @@ def predict(dataloader, model, args, save_result=False):
 
                         if file_view == 'upper':
                             pred_mask = upper_palette[pred_classes[i]]
-                            pred_mask_2d = upper_palette_2d[pred_classes_2d[i]] # (N_v, H, W, 3)
-                            gt_mask_2d = upper_palette_2d[masks[i]] # (N_v, H, W, 3)
+                            pred_mask_2d = upper_palette_2d[pred_classes_2d_sampled[i]] # (N_v, H, W, 3)
+                            gt_mask_2d = upper_palette_2d[masks_sampled[i]] # (N_v, H, W, 3)
                         elif file_view == 'lower':
                             pred_mask = lower_palette[pred_classes[i]]
-                            pred_mask_2d = lower_palette_2d[pred_classes_2d[i]]
-                            gt_mask_2d = lower_palette_2d[masks[i]]
+                            pred_mask_2d = lower_palette_2d[pred_classes_2d_sampled[i]]
+                            gt_mask_2d = lower_palette_2d[masks_sampled[i]]
                         save_path_3d = os.path.join(save_dir, f"{file_name_i}_predict.ply")
                         output_pred_ply(pred_mask, None, save_path_3d, point_coords[i], face_info[i])
                         output_pred_images(pred_mask_2d, gt_mask_2d, save_dir, file_name_i)
 
                 loop_val.set_postfix(miou=miou_batch)
             
-            print(f"Predict end, visual result saved at {args.save_predict_mask_dir}")
+                
             
             # 3d mIoU
             miou = torch.stack(miou).mean().item()
@@ -128,7 +133,7 @@ def predict(dataloader, model, args, save_result=False):
             # save metrics
             save_name = os.path.splitext(os.path.basename(args.provide_files))[0]
             save_metrics_to_txt(
-                filepath=os.path.join(args.save_predict_mask_dir, f"metrics_{save_name}_miou{miou:.3f}.txt"),
+                filepath=os.path.join(args.save_dir, f"metrics_{save_name}_miou{miou:.3f}.txt"),
                 num_classes=17,
                 miou=miou,
                 per_class_miou=per_class_iou.cpu().numpy(),
@@ -136,7 +141,7 @@ def predict(dataloader, model, args, save_result=False):
                 )
             
             save_metrics_to_txt(
-                filepath=os.path.join(args.save_predict_mask_dir, f"metrics_2d_{save_name}_miou{miou_2d:.3f}.txt"),
+                filepath=os.path.join(args.save_dir, f"metrics_2d_{save_name}_miou{miou_2d:.3f}.txt"),
                 num_classes=18,
                 miou=miou_2d,
                 per_class_miou=per_class_iou_2d.cpu().numpy(),
@@ -179,7 +184,7 @@ if __name__ == "__main__":
             )
 
     dataloader = DataLoader(
-                dataset, batch_size=args.batch_size, shuffle=True,
+                dataset, batch_size=args.batch_size, shuffle=False,
                 num_workers=args.num_workers, pin_memory=True, collate_fn=custom_collate_fn
             )
 
