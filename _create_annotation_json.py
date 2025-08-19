@@ -19,6 +19,7 @@ def create_annotation_json(root, split_folder, processed_folder,
                            output_dir=None):
 
     print(f"is_train = {is_train}")
+    print(f"train_test_split = {train_test_split}")
 
     if train_test_split == 1:
         split_files = ['training_lower.txt', 'training_upper.txt'] if is_train else ['testing_lower.txt',                                                                           'testing_upper.txt']
@@ -41,6 +42,7 @@ def create_annotation_json(root, split_folder, processed_folder,
         })
     
     for split_file in split_files:
+        print(f"\nProcessing {split_file}")
         txt_file = os.path.join(root, split_folder, split_file)
         if not os.path.exists(txt_file):
             raise FileNotFoundError(f"Split file {txt_file} does not exist.")
@@ -51,11 +53,13 @@ def create_annotation_json(root, split_folder, processed_folder,
 
         with open(os.path.join(root, split_folder, txt_file), 'r') as file:
             lines = file.readlines()  
-            for line in tqdm(lines, desc="Processing Patients", total=len(lines)):
+            pbar = tqdm(lines, desc=f"Processing patients in {split_file}")
+            for line in pbar:
                 # patient_start_time = time.time()
                 line = line.rstrip()
                 l_name = line.split('_')[0]
                 l_view = line.split('_')[1]
+                pbar.set_description(f"Processing patient {l_name}_{l_view}")
 
                 if train_test_split == 0:
                     render_dir = os.path.join(root, 'sample', processed_folder, l_view, l_name, 'render')
@@ -68,14 +72,13 @@ def create_annotation_json(root, split_folder, processed_folder,
 
                 # Path(bbox_dir).mkdir(parents=True, exist_ok=True)
                 if not os.path.exists(render_dir) or not os.path.exists(mask_dir):
-                    print(f"Warning: Missing directories for {line}")
+                    pbar.write(f"Warning: Missing directories for {line}")
                     continue
                 
                 render_files = sorted(os.listdir(render_dir))
                 mask_files = sorted(os.listdir(mask_dir))
 
-                # Only process the first 5 imgs
-                for render_file, mask_file in list(zip(render_files, mask_files))[:5]:
+                for render_file, mask_file in list(zip(render_files, mask_files)):
                     render_path = os.path.join(render_dir, render_file)
                     mask_path = os.path.join(mask_dir, mask_file)
 
@@ -181,10 +184,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     create_annotation_json(
-        is_train=args.is_train,
-        train_test_split=args.train_test_split,
         root='/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds',
         split_folder="split",
+        is_train=args.is_train,
+        train_test_split=args.train_test_split,
         processed_folder="processed",
         output_dir='/home/zychen/Documents/Project_shno/3DToothSeg/dataset/teeth3ds/teeth3ds/annotation'
     )
