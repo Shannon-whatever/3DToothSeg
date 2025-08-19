@@ -249,7 +249,7 @@ class ToothSegNet(nn.Module):
         return labels_final.unsqueeze(-1)  # (B, N_pc, 1)
     
 
-    def batched_forward(self, inputs, batch_size=2):
+    def seg_model_2d_forward(self, inputs, batch_size=64):
         """
         Run a model on inputs in small batches to avoid OOM.
         Args:
@@ -289,7 +289,10 @@ class ToothSegNet(nn.Module):
             render_size = renders.shape[-2:]
 
             # get 2d feature and 2d mask prediction
-            predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d(renders) # predict_2d_masks/predict_2d_aux: (B*N_v, 17+1, H, W), feature_2d: (B*N_v, C, H, W)
+            if self.training:
+                predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d(renders) # predict_2d_masks/predict_2d_aux: (B*N_v, 17+1, H, W), feature_2d: (B*N_v, C, H, W)
+            else:
+                predict_2d_masks, predict_2d_aux, feature_2d = self.seg_model_2d_forward(renders)
             # cameras_Rt (B, N_v, 4, 4), cameras_K (B, N_v, 3, 3)
             # 注意投影的时候点云坐标不能是标准化后的
             projected_pc = self.project_points(cameras_Rt, cameras_K, pointcloud[:, :, 6:], render_size)  # (B, N_v, N_pc, 2)

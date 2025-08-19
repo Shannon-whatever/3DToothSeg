@@ -3,14 +3,15 @@ import torch
 import argparse
 import numpy as np
 from tqdm import tqdm
+from einops import rearrange
 from torch.utils.data import DataLoader
 
 
 from models.main_network import ToothSegNet
 from dataset.teeth3ds import Teeth3DSDataset
-from utils.other_utils import output_pred_ply, save_metrics_to_txt
+from utils.other_utils import output_pred_ply, output_pred_images, save_metrics_to_txt
 from utils.color_utils import label2color_lower, label2color_upper
-from utils.metric_utils import calculate_miou
+from utils.metric_utils import calculate_miou, calculate_miou_2d
 from utils.dataset_utils import custom_collate_fn
 
 
@@ -31,9 +32,15 @@ def predict(dataloader, model, args, save_result=False):
           label2color_upper[label][2][2]]
          for label in range(0, 17)], dtype=np.uint8)
         
+        lower_palette_2d = np.concatenate([lower_palette, np.array([[0, 0, 0]], dtype=np.uint8)], axis=0) # (18, 3)
+        upper_palette_2d = np.concatenate([upper_palette, np.array([[0, 0, 0]], dtype=np.uint8)], axis=0) # (18, 3)
+        
         miou = []
         per_class_iou = []
         merge_iou = []
+
+        miou_2d = []
+        per_class_iou_2d = []
 
 
         with torch.no_grad():
@@ -46,17 +53,25 @@ def predict(dataloader, model, args, save_result=False):
                 labels = batch_data['labels']
 
                 renders = batch_data['renders'].to(args.device)
+                masks = batch_data['masks'].to(args.device)
                 cameras_Rt = batch_data['cameras_Rt'].to(args.device)
                 cameras_K = batch_data['cameras_K'].to(args.device)
 
 
                 pointcloud = pointcloud.to(args.device)
                 labels = labels.to(args.device)
-                _, _, point_seg_result, _ = model(pointcloud, renders, cameras_Rt, cameras_K) # (B, num_classes, N_pc)
-                # pred_softmax = torch.nn.functional.softmax(point_seg_result, dim=1)
-                # _, pred_classes = torch.max(pred_softmax, dim=1) # (B, N_pc)
+                predict_2d_masks, _, point_seg_result, _ = model(pointcloud, renders, cameras_Rt, cameras_K) 
+                # point_seg_result: (B, num_classes=17, N_pc) predict_2d_masks: (B*N_v, 17+1, H, W)
+                # 2d seg result
+                pred_classes_2d = predict_2d_masks.argmax(dim=1)  # (B*N_v, H, W)
+                masks = rearrange(masks, 'b nv h w -> (b nv) h w') # (B, N_v, H, W) -> (B*N_v, H, W)
+                miou_batch_2d, per_class_iou_batch_2d = calculate_miou_2d(
+                    pred_classes_2d, masks, n_class=17+1)
+                miou_2d.append(miou_batch_2d)
+                per_class_iou_2d.append(per_class_iou_batch_2d)
 
-                # calculate miou
+
+                # calculate miou for 3d seg
                 pred_classes = point_seg_result.argmax(dim=1)  # (B, N_pc)
                 # pred_classes[pred_classes == 17] = 0
                 # pred_classes[pred_classes == 18] = 0
@@ -68,41 +83,72 @@ def predict(dataloader, model, args, save_result=False):
                 merge_iou.append(merge_iou_batch)
 
                 if save_result:
-                    pred_classes = pred_classes.cpu().numpy().astype(np.uint8)
-
+                    # visualization on 3d mesh and 2d masks
                     bs = len(point_coords)
+
+                    pred_classes = pred_classes.cpu().numpy().astype(np.uint8)
+                    pred_classes_2d = pred_classes_2d.cpu().numpy().astype(np.uint8)
+                    pred_classes_2d = pred_classes_2d.reshape(bs, -1, *pred_classes_2d.shape[1:]) # (B, N_v, H, W)
+                    masks = masks.cpu().numpy().astype(np.uint8)
+                    masks = masks.reshape(bs, -1, *masks.shape[1:]) # (B, N_v, H, W)
+
+                    # sample 5 views every 8 steps from masks and pred_classes_2d for visualization
+                    sampled_indices = np.linspace(0, 40, 5, dtype=int)
+                    pred_classes_2d_sampled = pred_classes_2d[:, sampled_indices, ...]
+                    masks_sampled = masks[:, sampled_indices, ...]
+
                     for i in range(bs):
                         file_name_i = file_name[i]
-                        if 'upper' in file_name_i:
-                            save_path = os.path.join(args.save_predict_mask_dir, 'upper', f"{file_name_i}_predict.ply")
+                        file_view = file_name_i.split('_')[1]
+                        file_id = file_name_i.split('_')[0]
+                        save_dir = os.path.join(args.save_predict_mask_dir, file_view, file_id)
+                        os.makedirs(save_dir, exist_ok=True)
+
+                        if file_view == 'upper':
                             pred_mask = upper_palette[pred_classes[i]]
-                        elif 'lower' in file_name_i:
-                            save_path = os.path.join(args.save_predict_mask_dir, 'lower', f"{file_name_i}_predict.ply")
+                            pred_mask_2d = upper_palette_2d[pred_classes_2d_sampled[i]] # (N_v, H, W, 3)
+                            gt_mask_2d = upper_palette_2d[masks_sampled[i]] # (N_v, H, W, 3)
+                        elif file_view == 'lower':
                             pred_mask = lower_palette[pred_classes[i]]
-                        output_pred_ply(pred_mask, None, save_path, point_coords[i], face_info[i])
+                            pred_mask_2d = lower_palette_2d[pred_classes_2d_sampled[i]]
+                            gt_mask_2d = lower_palette_2d[masks_sampled[i]]
+                        save_path_3d = os.path.join(save_dir, f"{file_name_i}_predict.ply")
+                        output_pred_ply(pred_mask, None, save_path_3d, point_coords[i], face_info[i])
+                        output_pred_images(pred_mask_2d, gt_mask_2d, save_dir, file_name_i)
 
-
-                    print(f"Predict end, visual result saved at {args.save_predict_mask_dir}")
-                
                 loop_val.set_postfix(miou=miou_batch)
             
-
-            miou = torch.stack(miou)
-            miou = miou.mean().item()
-
+                
+            
+            # 3d mIoU
+            miou = torch.stack(miou).mean().item()
             per_class_iou = torch.stack(per_class_iou).mean(dim=0) # (C, )
             merge_iou = torch.stack(merge_iou).mean(dim=0) # (num_pairs, )
 
+            # 2d mIoU
+            miou_2d = torch.stack(miou_2d).mean().item()
+            per_class_iou_2d = torch.stack(per_class_iou_2d).mean(dim=0) # (C+1, )
+
 
             # save metrics
+            save_name = os.path.splitext(os.path.basename(args.provide_files))[0]
             save_metrics_to_txt(
-                filepath=os.path.join(args.save_dir, f"metrics_{args.provide_files}_miou{miou:.3f}.txt"),
+                filepath=os.path.join(args.save_dir, f"metrics_{save_name}_miou{miou:.3f}.txt"),
+                num_classes=17,
                 miou=miou,
                 per_class_miou=per_class_iou.cpu().numpy(),
                 merge_iou=merge_iou.cpu().numpy(),
                 )
             
-            print(f"Evaluation mIoU: {miou:.4f} for {args.provide_files}. Detail metrics saved to {args.save_dir}")
+            save_metrics_to_txt(
+                filepath=os.path.join(args.save_dir, f"metrics_2d_{save_name}_miou{miou_2d:.3f}.txt"),
+                num_classes=18,
+                miou=miou_2d,
+                per_class_miou=per_class_iou_2d.cpu().numpy(),
+                merge_iou=None,
+                )
+            
+            print(f"Evaluation mIoU: {miou:.4f} for {save_name}. Detail metrics saved to {args.save_dir}")
 
 
 def get_args():
@@ -138,7 +184,7 @@ if __name__ == "__main__":
             )
 
     dataloader = DataLoader(
-                dataset, batch_size=args.batch_size, shuffle=True,
+                dataset, batch_size=args.batch_size, shuffle=False,
                 num_workers=args.num_workers, pin_memory=True, collate_fn=custom_collate_fn
             )
 

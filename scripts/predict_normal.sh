@@ -10,9 +10,9 @@ python predict.py \
     --sample_points 16000 \
     --sample_views 10 \
     --batch_size 4 \
-    --save_dir exp/baseline_reproduce/typical_eg \
+    --save_dir exp/baseline_reproduce/normal_eg \
     --device cuda:0 \
     --num_workers 4 \
-    --provide_files exp/baseline_reproduce/typical_examples.txt \
+    --provide_files exp/baseline_reproduce/normal_examples.txt \
     --load_ckp exp/baseline_reproduce/toothseg_epoch100_miou0.938.pth \
-
+    --save_visual \
