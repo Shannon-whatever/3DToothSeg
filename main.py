@@ -242,6 +242,7 @@ class ToothSegmentationPipeline:
                     # save metrics
                     save_metrics_to_txt(
                         filepath=os.path.join(self.args.save_dir, f"metrics_result_epoch{current_epoch+1}_miou{miou:.3f}.txt"),
+                        num_classes=17,
                         miou=miou,
                         biou=biou,
                         per_class_miou=per_class_iou.cpu().numpy(),
