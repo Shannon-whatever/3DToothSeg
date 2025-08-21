@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 指定使用哪个 GPU（比如使用第 1 张卡，编号为 0）
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=5
 
 # 启动 Python 脚本，传入自定义参数
 python main.py \

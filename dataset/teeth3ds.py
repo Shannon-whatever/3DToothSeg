@@ -21,6 +21,7 @@ from utils.mesh_io import filter_files
 from utils.other_utils import output_pred_ply, load_color_from_ply, face_labels_to_vertex_labels
 from utils.color_utils import FDI2label, label2color_upper, label2color_lower
 from utils.other_utils import rgb_mask_to_label
+from utils.metric_utils import compute_boundary_mask
 
 
 random.seed(42)
@@ -322,10 +323,11 @@ class Teeth3DSDataset(Dataset):
             padding_labels = np.full((pad_points,), -1, dtype=labels.dtype)
             labels = np.concatenate((labels, padding_labels), axis=0)
 
-        
-
 
         pointcloud, labels, face_info = self.point_transform([pointcloud, labels, face_info])
+
+        # boundary labels
+        boundary_labels = compute_boundary_mask(pointcloud[:, 6:], labels)  # (N,)
 
         # image
         image_path_ls = sorted(glob(os.path.join(file_path, 'render', '*.png')), key=self.extract_view_idx) 
@@ -375,8 +377,9 @@ class Teeth3DSDataset(Dataset):
         return_dict = {
             "pointcloud": pointcloud, # (N_pc, 9) face center coord norm + face normal + face center coord ori
             "labels": labels, # (N_pc)
+            "boundary_labels": boundary_labels, # (N_pc)
             "point_coords": point_coords, # (N_vertices, 3) array
-            "face_info": face_info, # (N_pc, 6) array 
+            "face_info": face_info, # (N_pc, 3) array 
             "renders": renders, # (N_v, 3, H, W)
             "masks": masks, # (N_v, H, W)
             "cameras_Rt": cameras_rt, # (N_v, 4, 4)

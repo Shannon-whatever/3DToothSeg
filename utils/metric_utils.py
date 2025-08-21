@@ -31,7 +31,6 @@ def calculate_miou(pred_labels, gt_labels, n_class=17, ignore_index=-1,
         iou0_list: Tensor (B,), IoU for class 0 for each sample
     """
     device = gt_labels.device
-    bs = gt_labels.shape[0]
 
 
     # valid_mask = (gt_labels != ignore_index)
@@ -76,27 +75,37 @@ def calculate_miou_2d(pred_labels, gt_labels, n_class=17+1, ignore_index=-1):
 
 
 
-def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
-    pred_labels = torch.tensor(pred_labels)
-    gt_labels = torch.tensor(gt_labels)
+def calculate_biou(gt_labels, pred_labels, n_class=2):
+
+    device = gt_labels.device
+
+    cal_miou = tm.JaccardIndex(task="multiclass", num_classes=n_class).to(device)
+    miou = cal_miou(pred_labels, gt_labels)
+
+    return miou
 
 
-    cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None)
-    per_class_iou = cal_iou(pred_labels, gt_labels)
+# def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
+#     pred_labels = torch.tensor(pred_labels)
+#     gt_labels = torch.tensor(gt_labels)
 
-    iou_0 = per_class_iou[0]
 
-    # 3. 计算各类别在gt中的像素数（权重）
-    gt_labels_flat = gt_labels.view(-1)
-    counts = torch.bincount(gt_labels_flat, minlength=n_class).float()
-    weights = counts / counts.sum()
+#     cal_iou = tm.JaccardIndex(task="multiclass", num_classes=n_class, average=None)
+#     per_class_iou = cal_iou(pred_labels, gt_labels)
 
-    # 4. 计算加权mIoU（忽略没出现的类别）
-    mask = counts > 0  # 只对出现过的类别加权
-    weighted_iou = per_class_iou[mask] * weights[mask]
-    cal_weighted_miou = weighted_iou.sum()
+#     iou_0 = per_class_iou[0]
 
-    return cal_weighted_miou, iou_0
+#     # 3. 计算各类别在gt中的像素数（权重）
+#     gt_labels_flat = gt_labels.view(-1)
+#     counts = torch.bincount(gt_labels_flat, minlength=n_class).float()
+#     weights = counts / counts.sum()
+
+#     # 4. 计算加权mIoU（忽略没出现的类别）
+#     mask = counts > 0  # 只对出现过的类别加权
+#     weighted_iou = per_class_iou[mask] * weights[mask]
+#     cal_weighted_miou = weighted_iou.sum()
+
+#     return cal_weighted_miou, iou_0
 
 # def calculate_per_class_iou(gt_labels, pred_labels, n_class=17):
 #     pred_labels = torch.as_tensor(pred_labels)
@@ -107,36 +116,71 @@ def cal_weighted_miou(gt_labels, pred_labels, n_class=17):
 #     return per_class_iou
 
 
-def compute_boundary_mask(face_centers, labels, threshold=4, k=8):
-    """
-    向量化计算边界点mask。
-    - face_centers: (F, 3)
-    - labels: (F,)
-    返回 bool数组，True表示边界点
-    """
-    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(face_centers)
-    _, indices = nbrs.kneighbors(face_centers)  # (F, k+1)
+# def compute_boundary_mask(face_centers, labels, threshold=4, k=8):
+#     """
+#     向量化计算边界点mask。
+#     - face_centers: (F, 3)
+#     - labels: (F,)
+#     返回 bool数组，True表示边界点
+#     """
+#     nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(face_centers)
+#     _, indices = nbrs.kneighbors(face_centers)  # (F, k+1)
     
-    # 取出邻居标签，shape=(F, k+1)
-    neighbor_labels = labels[indices]
+#     # 取出邻居标签，shape=(F, k+1)
+#     neighbor_labels = labels[indices]
 
-    # 中心点标签扩展到邻居维度，shape=(F, 1)
-    center_labels = labels[:, np.newaxis]
+#     # 中心点标签扩展到邻居维度，shape=(F, 1)
+#     center_labels = labels[:, np.newaxis]
 
-    # 判断邻居标签是否与中心点标签相等，shape=(F, k+1)
+#     # 判断邻居标签是否与中心点标签相等，shape=(F, k+1)
+#     equal_mask = (neighbor_labels == center_labels)
+
+#     # 排除自己（第0个邻居即自身）
+#     equal_mask = equal_mask[:, 1:]  # shape=(F, k)
+
+#     # 计算与中心点标签不相等的邻居数量
+#     diff_count = np.sum(~equal_mask, axis=1)  # shape=(F,)
+
+#     # 多数邻居标签不同则为边界点
+#     boundary_mask = diff_count > threshold
+
+#     return boundary_mask
+
+
+def compute_boundary_mask(face_centers, labels, threshold=1, k=8):
+    """
+    使用 PyTorch 实现的向量化边界点检测。
+    - face_centers: (F, 3) float tensor
+    - labels: (F,) long tensor
+    返回: (F,) bool tensor, True 表示边界点
+    """
+    F = face_centers.shape[0]
+
+    # 计算 pairwise 距离 (F, F)
+    dists = torch.cdist(face_centers, face_centers)  # (F, F)
+
+    # 找最近邻 (包含自己)，取 k+1 个
+    knn_dists, knn_indices = torch.topk(dists, k=k+1, dim=1, largest=False)
+
+    # 取邻居标签 (F, k+1)
+    neighbor_labels = labels[knn_indices]
+
+    # 中心点标签 (F, 1) -> (F, k+1) 自动广播
+    center_labels = labels[:, None]
+
+    # 判断标签是否相等
     equal_mask = (neighbor_labels == center_labels)
 
-    # 排除自己（第0个邻居即自身）
-    equal_mask = equal_mask[:, 1:]  # shape=(F, k)
+    # 排除自己（第0个邻居）
+    equal_mask = equal_mask[:, 1:]  # (F, k)
 
-    # 计算与中心点标签不相等的邻居数量
-    diff_count = np.sum(~equal_mask, axis=1)  # shape=(F,)
+    # 统计不同标签的数量
+    diff_count = (~equal_mask).sum(dim=1)  # (F,)
 
-    # 多数邻居标签不同则为边界点
+    # 超过阈值的视为边界
     boundary_mask = diff_count > threshold
 
-    return boundary_mask
-
+    return boundary_mask.long()
 
 # def calculate_merged_ious(gt_labels, pred_labels, eps=True):
 #     merged_ious = {}

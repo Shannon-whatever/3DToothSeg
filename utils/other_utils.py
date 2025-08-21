@@ -255,7 +255,7 @@ def rgb_mask_to_label(mask_tensor, num_classes=17):
 
 
 
-def save_metrics_to_txt(filepath, num_classes, miou, per_class_miou, merge_iou, 
+def save_metrics_to_txt(filepath, num_classes, miou, biou, per_class_miou, merge_iou, 
                         merge_pairs=[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16)]):
     """
     Save evaluation metrics to a plain text (.txt) file.
@@ -273,6 +273,7 @@ def save_metrics_to_txt(filepath, num_classes, miou, per_class_miou, merge_iou,
     with open(filepath, "w") as f:
         f.write("==== Segmentation Evaluation Metrics ====\n\n")
         f.write(f"Overall mIoU: {miou:.4f}\n\n")
+        f.write(f"Overall bIoU: {biou:.4f}\n\n")
 
         f.write("Per-Class mIoU:\n")
         for i, iou in enumerate(per_class_miou):

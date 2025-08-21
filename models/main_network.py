@@ -301,13 +301,13 @@ class ToothSegNet(nn.Module):
 
             # 只取标准化后的点云坐标和法向量
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
-            predict_pc_labels, _, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
+            predict_pc_labels, predict_pc_boundary_labels, cbl_loss_aux = self.seg_model_3d(pc, point_to_pixel_feat=point_features_2d) # predict_pc_labels: (B, 17, N_pc)
             
-            return predict_2d_masks, predict_2d_aux, predict_pc_labels, cbl_loss_aux
+            return predict_pc_labels, predict_pc_boundary_labels, predict_2d_masks, predict_2d_aux, cbl_loss_aux
         
         else:
             
             pc = pointcloud[:, :, :6].permute(0, 2, 1).contiguous()  # (B, N_pc, 6) -> (B, 6, N_pc)
             predict_pc_labels, _ = self.seg_model_3d(pc)
 
-            return None, None, predict_pc_labels, None
+            return predict_pc_labels, None, None, None, None
