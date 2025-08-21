@@ -99,6 +99,7 @@ def create_annotation_json(root, txt_file, output_dir):
                             "category_id": category_id,
                             "bbox": [int(coord) for coord in b.tolist()],
                             "bbox_mode": 1, # BoxMode.XYWH_ABS
+                            "area": int(b[2] * b[3]),
                             "iscrowd": 0
                         })
                         annotation_id += 1
