@@ -1,9 +1,9 @@
 import torch
 
-
 def custom_collate_fn(batch):
         pointclouds = []
         labels = []
+        boundary_labels = []
         point_coords_list = []
         face_infos = []
         renders = []
@@ -16,6 +16,7 @@ def custom_collate_fn(batch):
             # 解包数据字典
             pc = data_dict['pointcloud']
             label = data_dict['labels']
+            boundary_label = data_dict['boundary_labels']
             p_coords = data_dict['point_coords']
             f_info = data_dict['face_info']
             render = data_dict['renders']
@@ -26,6 +27,7 @@ def custom_collate_fn(batch):
 
             pointclouds.append(pc)
             labels.append(label)
+            boundary_labels.append(boundary_label)
             point_coords_list.append(p_coords)  # 不堆叠，保留为 list of np.array
             face_infos.append(f_info) # 保留为 list of np.array
             renders.append(render)
@@ -37,6 +39,7 @@ def custom_collate_fn(batch):
         # 堆叠固定 shape 的数据
         pointclouds = torch.stack(pointclouds)  # (B, num_points, 6)
         labels = torch.stack(labels)            # (B, num_points)
+        boundary_labels = torch.stack(boundary_labels)  # (B, num_points)
         renders = torch.stack(renders)          # (B, num_views, 3, H, W)
         masks = torch.stack(masks)              # (B, num_views, H, W)
         cameras_Rt = torch.stack(cameras_Rt)    # (B, num_views, 4, 4)
@@ -45,6 +48,7 @@ def custom_collate_fn(batch):
         return_dict = {
             'pointclouds': pointclouds,
             'labels': labels,
+            'boundary_labels': boundary_labels,
             'point_coords': point_coords_list,  # 保持为 list of np.array
             'face_infos': face_infos,
             'renders': renders,
