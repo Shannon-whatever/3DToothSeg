@@ -2,6 +2,8 @@ import argparse
 import random
 import cv2
 import os
+import warnings
+warnings.filterwarnings("ignore", message="torch.meshgrid")
 
 # DATASETS
 from detectron2.data.datasets import register_coco_instances
@@ -23,8 +25,8 @@ from detectron2.utils.visualizer import Visualizer
 def setup_cfg(mode):
     cfg = get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file('COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml'))
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 32
-    cfg.OUTPUT_DIR = "./output"   # single place for all outputs
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 16
+    cfg.OUTPUT_DIR = "./output_1"   # single place for all outputs
     
     if mode == "train":
         # DATASETS

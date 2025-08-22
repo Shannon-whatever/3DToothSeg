@@ -54,9 +54,9 @@ def create_annotation_json(root, txt_file, output_dir):
             mask_files = sorted(os.listdir(mask_dir), key=extract_number)
 
             # Select first 18 and last 18 (if enough exist)
-            if len(render_files) > 36:
-                render_files = render_files[:18] + render_files[-18:]
-                mask_files = mask_files[:18] + mask_files[-18:]
+            # if len(render_files) > 36:
+                # render_files = render_files[:18] + render_files[-18:]
+                # mask_files = mask_files[:18] + mask_files[-18:]
 
             for render_file, mask_file in list(zip(render_files, mask_files)):
                 render_path = os.path.join(render_dir, render_file)
@@ -115,7 +115,7 @@ def create_annotation_json(root, txt_file, output_dir):
             "version": "1.0",
             "year": 2025,
             "contributor": "Chensy",
-            "date_created": "2025-08-07"
+            "date_created": "2025-08-22"
         },
         "licenses": [
             {
@@ -142,7 +142,7 @@ def create_annotation_json(root, txt_file, output_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--txt_file', type=str, required=True, help='Path to the text file containing image paths')
-    parser.add_argument('--output_dir', type=str, default='/home/zychen/Documents/Project_shno/3DToothSeg/temp/datasets/teeth3ds/teeth3ds_coco36')
+    parser.add_argument('--output_dir', type=str, default='/home/zychen/Documents/Project_shno/3DToothSeg/temp/datasets/teeth3ds/teeth3ds_coco')
     args = parser.parse_args()
 
     create_annotation_json(

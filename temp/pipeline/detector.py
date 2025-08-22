@@ -11,13 +11,15 @@ class FasterRCNNDetector:
         cfg.merge_from_file(model_zoo.get_config_file(config_path))
         # CONFIG SETTING
         cfg.DATASETS.TEST = ("teeth3ds_coco36_test",)
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 32
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 16
+        cfg.OUTPUT_DIR = "./output_1"
+        cfg.INPUT.MAX_SIZE_TEST = 1024
+        cfg.INPUT.MIN_SIZE_TEST = 1024
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_thresh
         if weights_path is not None:
             cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, weights_path)
         else:
             cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(config_path)
-        cfg.OUTPUT_DIR = "./output"
         os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
         # BUILD PREDICTOR
