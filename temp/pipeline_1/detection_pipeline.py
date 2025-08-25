@@ -1,10 +1,11 @@
-from tracemalloc import start
 import torch
+import cv2
+import numpy as np
+from torchvision.transforms import ToTensor
 
 from .detector import FasterRCNNDetector
 from .segmenter import EfficientSAMSegmenter
 from utils import boxes_to_points_labels
-
 
 class DetectionSegmentationPipeline:
     def __init__(self, cfg):
@@ -14,73 +15,56 @@ class DetectionSegmentationPipeline:
         self.segmenter = EfficientSAMSegmenter(cfg)
 
     def __call__(self, batch):
-        # GPU timers
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
+        """
+        Here we assume the batch_size = 1
 
-        timings = {}
+        Args:
+        batch: list of dict with keys: file_name, height, width, image_id, image
+            Example:
+            file_name: "./datasets/teeth3ds/teeth3ds_coco36/test/4MC4KRQV_upper_0.png"
+            height, width: 1024 1024
+            image: torch.Size([3, 1024, 1024])
 
-        # Step 1: Detection
-        start.record()
-        padded_boxes, padded_scores, padded_classes, valid_mask = self.detector(batch)
-        # print(f"Detected boxes: {padded_boxes.shape}, scores: {padded_scores.shape}, classes: {padded_classes.shape}, valid mask: {valid_mask.shape}")
-        end.record()
-        torch.cuda.synchronize()
-        timings['detection'] = start.elapsed_time(end)  # in milliseconds
-
-        # Step 2: boxes → points
-        start.record()
-        batched_points, batched_labels = boxes_to_points_labels(padded_boxes)
-        # print(f"Converted points: {batched_points.shape}, labels: {batched_labels.shape}")
-        end.record()
-        torch.cuda.synchronize()
-        timings['boxes_to_points'] = start.elapsed_time(end)
+        Returns: list of prediction with the following form
+        {
+            "masks": [B, N, H, W] binary masks
+            "boxes": [B, N, 4] boxes in (x1, y1, x2, y2) format
+            "box_scores": [B, N] confidence scores
+            "classes": [B, N] class labels
+        }
+        """
+        image = cv2.imread(batch[0]["file_name"])
+        boxes, scores, classes = self.detector(image)
+        # print(f"Detected boxes: {boxes.shape}, scores: {scores.shape}, classes: {classes.shape}")
         
-        # Step 3: get batched_images [B,3,H,W]
-        start.record()
-        batched_images = torch.stack([x["image"] for x in batch]) 
-        if batched_images.dtype != torch.float32:
-            batched_images = batched_images.float()
+        batched_points, batched_labels = boxes_to_points_labels(boxes)
+        # print(f"Converted points: {batched_points.shape}, labels: {batched_labels.shape}")
+
+        if isinstance(image, np.ndarray):
+            batched_images = ToTensor()(image).unsqueeze(0)  # [1,3,H,W]
+        else:
+            batched_images = image.unsqueeze(0)
+        batched_images = batched_images.to(self.device)
         # print(f"Image batch shape: {batched_images.shape}")
 
-        batched_images = torch.stack([x["image"] for x in batch]).pin_memory().to(self.device, non_blocking=True)
-        batched_points = batched_points.to(self.device, non_blocking=True)
-        batched_labels = batched_labels.to(self.device, non_blocking=True)
-
-        end.record()
-        torch.cuda.synchronize()
-        timings['prepare_inputs'] = start.elapsed_time(end)
-
-        # Step 4: segment
-        start.record()
-        results = self.segmenter(
-            batched_images,
-            batched_points,
-            batched_labels
+        results = self.segmenter(batched_images, batched_points, batched_labels)
+        predicted_logits, predicted_iou = results
+        sorted_ids = torch.argsort(predicted_iou, dim=-1, descending=True)
+        predicted_iou = torch.take_along_dim(predicted_iou, sorted_ids, dim=2)
+        predicted_logits = torch.take_along_dim(
+            predicted_logits, sorted_ids[..., None, None], dim=2
         )
-        end.record()
-        torch.cuda.synchronize()
-        timings['segmentation'] = start.elapsed_time(end)
+        # print(f"Segmented masks: {predicted_logits.shape}, IOU: {predicted_iou.shape}")
 
-        # Step 5: choose best masks
-        start.record()
-        masks, iou_predictions = results  # shapes [B, N, 3, H, W] and [B, N, 3]
-        best_idx = torch.argmax(iou_predictions, dim=-1)  # [B, N]
-        B, N, _, _, _ = masks.shape
-        best_masks = masks[torch.arange(B)[:, None], torch.arange(N)[None, :], best_idx]  # [B, N, H, W]
-        best_ious = torch.max(iou_predictions, dim=-1).values  # [B, N]
-        # print(f"Segmented masks: {best_masks.shape}, IOU predictions: {best_ious.shape}")
-        end.record()
-        torch.cuda.synchronize()
-        timings['postprocess_masks'] = start.elapsed_time(end)
-
-        # print(timings)
+        # threshold 0, add batch dimensions
+        masks = torch.ge(predicted_logits[:, :, 0, :, :], 0)
+        boxes = boxes.unsqueeze(0)
+        scores = scores.unsqueeze(0)
+        classes = classes.unsqueeze(0)
 
         return {
-            "masks": best_masks,         # [B, N, H, W]
-            "boxes": padded_boxes,       # [B, N, 4]
-            "box_scores": padded_scores,     # [B, N]
-            "iou_predictions": best_ious, #[B, N]
-            "classes": padded_classes,   # [B, N]
-            "valid_mask": valid_mask     # [B, N]
+            "masks": masks,  # [B, N, H, W]
+            "boxes": boxes,       # [B, N, 4]
+            "box_scores": scores,     # [B, N]
+            "classes": classes,   # [B, N]
         }

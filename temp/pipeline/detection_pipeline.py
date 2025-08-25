@@ -50,10 +50,22 @@ class DetectionSegmentationPipeline:
         batched_point_labels = batched_point_labels.to(self.device)
 
         # Step 5: feed boxes into EfficientSAM
-        masks = self.segmenter.segment(
+        results = self.segmenter.segment(
             batched_images,
             batched_points,
             batched_point_labels
         )
 
-        return masks, boxes, scores, classes
+        predicted_logits, predicted_iou = results
+        sorted_ids = torch.argsort(predicted_iou, dim=-1, descending=True)
+        predicted_iou = torch.take_along_dim(predicted_iou, sorted_ids, dim=2)
+        predicted_logits = torch.take_along_dim(
+            predicted_logits, sorted_ids[..., None, None], dim=2
+        )
+
+        return {
+            "masks": torch.ge(predicted_logits[:, :, 0, :, :], 0).cpu().detach().numpy(),  # [B, N, H, W]
+            "boxes": boxes,       # [B, N, 4]
+            "box_scores": scores,     # [B, N]
+            "classes": classes,   # [B, N]
+        }

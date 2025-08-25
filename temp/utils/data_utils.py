@@ -1,30 +1,22 @@
 import torch
 
-def boxes_to_points_labels(batched_boxes):
+def boxes_to_points_labels(boxes):
     """
-    Convert [B, N, 4] boxes to [B, N, 2, 2] points and [B, N, 2] labels for EfficientSAM
-    Args:
-        batched_boxes: torch.Tensor [B, N, 4] -> (x1, y1, x2, y2)
-    Returns:
-        batched_points: torch.Tensor [B, N, 2, 2]
-        batched_labels: torch.Tensor [B, N, 2]
+    Convert [N,4] boxes to batched_points and batched_point_labels tensors for EfficientSAM
+    Keeps outputs on the same device as boxes
     """
-    B, N, _ = batched_boxes.shape
+    device = boxes.device
+    num_boxes = boxes.shape[0]
 
-    # Split coordinates
-    x1 = batched_boxes[..., 0]
-    y1 = batched_boxes[..., 1]
-    x2 = batched_boxes[..., 2]
-    y2 = batched_boxes[..., 3]
+    points_list = []
+    labels_list = []
 
-    # Construct points: [B, N, 2, 2]
-    batched_points = torch.stack([
-        torch.stack([x1, y1], dim=-1),  # top-left
-        torch.stack([x2, y2], dim=-1)   # bottom-right
-    ], dim=-2)
+    for i in range(num_boxes):
+        x1, y1, x2, y2 = boxes[i]
+        points_list.append([[x1, y1], [x2, y2]])    # 2 points per box
+        labels_list.append([2, 3])                  # 2=top-left, 3=bottom-right
 
-    # Construct labels: [B, N, 2], always [2, 3]
-    batched_labels = torch.tensor([2, 3], device=batched_boxes.device)
-    batched_labels = batched_labels.expand(B, N, -1)
+    batched_points = torch.tensor(points_list, device=device).unsqueeze(0)   # [B=1, num_queries=num_boxes, num_pts=2, 2]
+    batched_point_labels = torch.tensor(labels_list, device=device).unsqueeze(0)  # [B=1, num_queries=num_boxes, num_pts=2]
 
-    return batched_points, batched_labels
+    return batched_points, batched_point_labels

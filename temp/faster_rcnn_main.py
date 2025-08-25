@@ -22,7 +22,7 @@ from detectron2.data import build_detection_test_loader
 # VISUALIZATION
 from detectron2.utils.visualizer import Visualizer
 
-def setup_cfg(mode):
+def setup_cfg(mode, dataset):
     cfg = get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file('COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml'))
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 16
@@ -30,7 +30,7 @@ def setup_cfg(mode):
     
     if mode == "train":
         # DATASETS
-        cfg.DATASETS.TRAIN = ("teeth3ds_coco36_train",)
+        cfg.DATASETS.TRAIN = ("teeth3ds_coco36_train",) if dataset == "teeth3ds_coco36" else ("teeth3ds_coco_train",)
         # DATALOADER
         cfg.DATALOADER.NUM_WORKERS = 4
         # MODELS
@@ -43,7 +43,7 @@ def setup_cfg(mode):
         cfg.SOLVER.STEPS = (23040, 25920)
         cfg.SOLVER.CHECKPOINT_PERIOD = 14400
     elif mode == "infer" or mode == "eval":
-        cfg.DATASETS.TEST = ("teeth3ds_coco36_test",)
+        cfg.DATASETS.TEST = ("teeth3ds_coco36_test",) if dataset == "teeth3ds_coco36" else ("teeth3ds_coco_test",)
         cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7
     
@@ -51,14 +51,14 @@ def setup_cfg(mode):
     return cfg
 
 
-def train():
-    cfg = setup_cfg("train")
+def train(args):
+    cfg = setup_cfg("train", args.dataset)
     trainer = DefaultTrainer(cfg)
     trainer.resume_or_load(resume=False)
     trainer.train()
 
-def infer():
-    cfg = setup_cfg("infer")
+def infer(args):
+    cfg = setup_cfg("infer", args.dataset)
     predictor = DefaultPredictor(cfg)
 
     teeth3ds_coco36_test_metadata = MetadataCatalog.get("teeth3ds_coco36_test")
@@ -80,28 +80,33 @@ def infer():
         ok = cv2.imwrite(save_path, result)
         print(f"Saved {save_path}, success={ok}")
 
-def eval():
-    cfg = setup_cfg("eval")
+def eval(args):
+    cfg = setup_cfg("eval", args.dataset)
     model = build_model(cfg)
     DetectionCheckpointer(model).load(cfg.MODEL.WEIGHTS)
-    evaluator = COCOEvaluator("teeth3ds_coco36_test", tasks=("bbox",), distributed=False, output_dir=cfg.OUTPUT_DIR)
-    val_loader = build_detection_test_loader(cfg, "teeth3ds_coco36_test")
+    evaluator = COCOEvaluator(cfg.DATASETS.TEST[0], tasks=("bbox",), distributed=False, output_dir=cfg.OUTPUT_DIR)
+    val_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
     inference_on_dataset(model, val_loader, evaluator)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and evaluate a Detectron2 model")
+    parser.add_argument("--dataset", choices=["teeth3ds_coco36", "teeth3ds_coco"], default="teeth3ds_coco36")
     parser.add_argument("--train", action="store_true", help="Train the model")
     parser.add_argument("--infer", action="store_true", help="Run inference")
     parser.add_argument("--eval", action="store_true", help="Evaluate the model")
     args = parser.parse_args()
 
     # Register the datasets
-    register_coco_instances("teeth3ds_coco36_train", {}, "./datasets/teeth3ds/teeth3ds_coco36/train_annotation.json", "./datasets/teeth3ds/teeth3ds_coco36/train")
-    register_coco_instances("teeth3ds_coco36_test", {}, "./datasets/teeth3ds/teeth3ds_coco36/test_annotation.json", "./datasets/teeth3ds/teeth3ds_coco36/test")
+    if args.dataset == "teeth3ds_coco36":
+        register_coco_instances("teeth3ds_coco36_train", {}, "./datasets/teeth3ds/teeth3ds_coco36/train_annotation.json", "./datasets/teeth3ds/teeth3ds_coco36/train")
+        register_coco_instances("teeth3ds_coco36_test", {}, "./datasets/teeth3ds/teeth3ds_coco36/test_annotation.json", "./datasets/teeth3ds/teeth3ds_coco36/test")
+    elif args.dataset == "teeth3ds_coco":
+        register_coco_instances("teeth3ds_coco_train", {}, "./datasets/teeth3ds/teeth3ds_coco/train_annotation.json", "./datasets/teeth3ds/teeth3ds_coco/train")
+        register_coco_instances("teeth3ds_coco_test", {}, "./datasets/teeth3ds/teeth3ds_coco/test_annotation.json", "./datasets/teeth3ds/teeth3ds_coco/test")
 
     if args.train:
-       train()
+       train(args)
     if args.infer:
-       infer()
+       infer(args)
     if args.eval:
-       eval()
+       eval(args)

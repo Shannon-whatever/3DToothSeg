@@ -5,30 +5,30 @@ import numpy as np
 from PIL import Image
 from utils.color_utils import color2label
 
-def masks_to_label_map_batch(mask, classes, valid_mask, ignore_index=0):
+def masks_to_label_maps_batch(masks, classes, ignore_index=0):
     """
     Convert batched masks to label map.
-    
-    mask: [B, N, H, W] predicted mask probabilities (0~1)
+
+    masks: [B, N, H, W] predicted mask probabilities (0~1)
     classes: [B, N] predicted class IDs
-    valid_mask: [B, N] boolean mask for valid boxes/masks
+    ignore_index: background label (default=0)
     
     Returns:
         label_map: [B, H, W] predicted label for each pixel
     """
-    B, N, H, W = mask.shape
-    device = mask.device
+    B, N, H, W = masks.shape
+    device = masks.device
     label_map = torch.full((B, H, W), ignore_index, dtype=torch.long, device = device)
 
     for b in range(B):
         for n in range(N):
-            if valid_mask[b, n]:
-                mask_n = mask[b, n] > 0.5  # threshold
-                label_map[b][mask_n] = classes[b, n] + 1
-    
+            class_id = classes[b, n].item()
+            mask = masks[b, n].bool()
+            label_map[b][mask] = class_id + 1 # to match with GT
+
     return label_map
 
-def color_mask_to_label_maps_batch(batch, ignore_index=0, device="cpu"):
+def color_masks_to_label_maps_batch(batch, ignore_index=0, device="cpu"):
     """
     Convert a batch of ground truth RGB mask images to label maps.
 

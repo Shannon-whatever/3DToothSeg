@@ -19,7 +19,7 @@ def save_metrics_to_txt(filepath, num_classes, miou, biou, per_class_miou, merge
     with open(filepath, "w") as f:
         f.write("==== Segmentation Evaluation Metrics ====\n\n")
         f.write(f"Overall mIoU: {miou:.4f}\n\n")
-        f.write(f"Overall bIoU: {biou:.4f}\n\n")
+        # f.write(f"Overall bIoU: {biou:.4f}\n\n")
 
         f.write("Per-Class mIoU:\n")
         for i, iou in enumerate(per_class_miou):
